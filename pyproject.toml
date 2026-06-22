@@ -1,0 +1,24 @@
+[project]
+name = "pith"
+version = "0.1.0"
+description = "Free URL -> clean, LLM-ready markdown. A drop-in for the Parallel Extract API."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+dependencies = [
+    "trafilatura>=1.8",
+]
+
+[project.optional-dependencies]
+# JS-rendered / bot-protected pages (Reddit, LinkedIn, …): a real stealth browser.
+# After installing this extra, run:  scrapling install   (downloads the browser once)
+js = ["scrapling[fetchers]>=0.4"]
+# PDFs:
+pdf = ["pymupdf>=1.24"]
+
+[project.scripts]
+pith = "pith.cli:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
