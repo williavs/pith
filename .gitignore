@@ -7,3 +7,7 @@ uv.lock
 /tmp/
 .venv/
 pith.egg-info/
+# benchmark build artifacts (sources + Cargo.lock/go.sum are committed for reproducibility)
+benchmarks/rust/target/
+benchmarks/go/pithbench
+.claude-peers-agent

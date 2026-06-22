@@ -1,0 +1,7 @@
+# pith list input — label,url (company first). Comments and blanks are skipped.
+# Run:  pith --from examples/companies.csv --format table
+Stripe,https://stripe.com
+Anthropic,https://www.anthropic.com
+Linear,https://linear.app
+# a bare URL with no label is fine too:
+https://example.com

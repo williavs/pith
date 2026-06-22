@@ -50,6 +50,21 @@ pith "https://example.com/article" "what is the refund policy?"
 pith "https://www.reddit.com/r/python/" --js
 ```
 
+### A list of URLs
+
+Give pith a file instead of a single URL — one target per line, a bare URL or a
+`label,url` pair (csv, either order; `#` and blanks skipped):
+
+```sh
+pith --from companies.csv                  # markdown, per-label sections (default)
+pith --from companies.csv --format table   # compact: status / bytes / target + summary
+pith --from companies.csv --format json    # machine-readable {results, errors}
+pith --from companies.csv --workers 8       # parallel fetches
+```
+
+Progress prints to stderr, so `--format json > out.json` stays clean. One bad URL is
+reported in `errors`, never sinks the batch. See `examples/companies.csv`.
+
 ## Social / bot-protected sites
 
 Reddit, LinkedIn, and Instagram hard-block plain HTTP at the edge (TLS-fingerprint /
