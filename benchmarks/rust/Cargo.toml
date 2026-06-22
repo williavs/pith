@@ -1,0 +1,14 @@
+[package]
+name = "pithbench"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+dom_smoothie = "0.18.0"
+htmd = "0.5.4"
+readability = "0.3.0"
+trafilatura = { version = "0.3.0", features = ["markdown"] }
+url = "2.5.8"
+
+[profile.release]
+opt-level = 3
