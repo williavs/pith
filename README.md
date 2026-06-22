@@ -3,24 +3,27 @@
 Turn any public URL into clean, LLM-ready markdown. A **free, drop-in replacement for the
 [Parallel Extract API](https://docs.parallel.ai)** — same call shape, same result fields, $0.
 
-It's the extraction stage of a pipeline: URL in → clean markdown out. Handles JS-rendered and
-bot-protected pages (Reddit, LinkedIn, …) via a real stealth browser.
+It's the extraction stage of a pipeline: URL in → clean markdown out. Normal pages go through
+a fast HTTP path; JS-rendered and bot-protected pages (Reddit, LinkedIn, Instagram, X, and the
+B2B sources below) go through a real stealth browser to reach the **public** content.
 
 ## Install
 
-Install from this repo (not PyPI — the `pith` name there is a different package):
+From this repo (not PyPI — the `pith` name there is an unrelated package):
 
 ```sh
-# base: clean markdown from normal pages
-pip install "git+https://github.com/williavs/pith"
+# base — clean markdown from normal/public pages, no browser
+pip install "pith @ git+https://github.com/williavs/pith"
 
-# + JS-rendered / walled sites (Reddit, LinkedIn, Instagram, X, B2B sources) — what you'll want
-pip install "git+https://github.com/williavs/pith#egg=pith[js]"
-scrapling install     # one-time: downloads the stealth browser
+# + walled / JS-rendered sites (Reddit, LinkedIn, Instagram, X, B2B sources) — what you'll want
+pip install "pith[js] @ git+https://github.com/williavs/pith"
+scrapling install          # one-time: downloads the stealth browser (~a few hundred MB)
 
 # + PDFs
-pip install "git+https://github.com/williavs/pith#egg=pith[pdf]"
+pip install "pith[pdf] @ git+https://github.com/williavs/pith"
 ```
+
+Python 3.10+ (developed and tested on 3.13).
 
 ## Use — Python (mirrors Parallel's API)
 
@@ -30,8 +33,8 @@ from pith import Extractor
 ex = Extractor()  # no API key needed for markdown
 
 out = ex.extract(
-    urls=["https://www.un.org/en/about-us/history-of-the-un"],
-    objective="When was the United Nations established?",  # optional → focused excerpts
+    urls=["https://www.crunchbase.com/organization/stripe"],
+    objective="latest funding round",   # optional → focused excerpts (one free LLM call)
 )
 for r in out.results:
     print(r.title, r.publish_date)
@@ -39,88 +42,106 @@ for r in out.results:
         print(excerpt)
 ```
 
-`extract()` parameters:
-| param | default | meaning |
-|---|---|---|
-| `urls` | — | list of URLs |
-| `objective` | `None` | if set, returns only the passages answering it (one free LLM call) |
-| `full_content` | `False` | also return the full page markdown in `r.full_content` |
-| `render_js` | `"auto"` | `"auto"` tries static then falls back to a browser if the page looks JS-rendered; `True` forces the browser; `False` never uses it |
-
-Result fields (same as Parallel): `r.url`, `r.title`, `r.publish_date`, `r.excerpts` (list), `r.full_content`.
+`extract()` params: `urls`, `objective` (None), `full_content` (False), `render_js`
+(`"auto"` | `True` | `False`). Result fields, same as Parallel: `r.url`, `r.title`,
+`r.publish_date`, `r.excerpts` (list), `r.full_content`.
 
 ## Use — CLI
 
 ```sh
 pith "https://example.com/article"
-pith "https://example.com/article" "what is the refund policy?"
-pith "https://www.reddit.com/r/python/" --js
+pith "https://example.com/article" "what is the refund policy?"   # objective → excerpts
+
+# a list of URLs (one per line, bare URL or `label,url`; # and blanks skipped)
+pith --from companies.csv                 # markdown, per-label sections (default)
+pith --from companies.csv --format table  # compact: status / bytes / target
+pith --from companies.csv --format json   # machine-readable {results, errors}
+pith --from companies.csv --workers 8     # parallel fetches
 ```
 
-### A list of URLs
+## Supported sources
 
-Give pith a file instead of a single URL — one target per line, a bare URL or a
-`label,url` pair (csv, either order; `#` and blanks skipped):
+Tested live against real public URLs (see `benchmarks/`). pith returns **public data only** —
+it does not log in, bypass auth, or defeat paywalls.
+
+**✅ Full public content**
+
+| source | what you get | path |
+|---|---|---|
+| Reddit | posts, comments | browser |
+| LinkedIn (company + person) | posts, headline, about, experience, education¹ | browser |
+| X / Twitter | tweet text | browser |
+| Medium | article content | browser |
+| Crunchbase | funding, firmographics | browser |
+| Indeed | open roles (hiring intent)² | browser |
+| Product Hunt | launches | browser |
+| Trustpilot | reviews + rating | browser |
+| Glassdoor | company overview | browser |
+| arXiv, GitHub | public pages | fast HTTP |
+| Guardian, BBC, Substack, FT (sections) | article / section content | fast HTTP |
+
+**🟡 Partial** — identity/metadata, body behind a login wall or flaky:
+
+| source | what you get |
+|---|---|
+| Instagram | bio + captions — usually full, occasionally hits a login wall² |
+| Facebook | name + follower counts; post body is login-walled |
+| Threads | short post captions only |
+
+**❌ Not supported** — hard paywall / anti-bot, body not reachable:
+
+| source | why |
+|---|---|
+| NYTimes (article body), Bloomberg, WSJ | paywall + CAPTCHA block the body. pith does not defeat paywalls. |
+
+¹ LinkedIn person pages also include a "sign in to view full profile" notice; the public
+fields above still come through.
+² Indeed and Instagram occasionally serve an anti-bot wall on a given fetch; pith retries
+once automatically, but a hard wall on both attempts returns thin/partial content.
+
+## How it works
+
+1. **Fetch** — `trafilatura` for normal pages (fast, no browser); a **stealth browser**
+   (`scrapling`, with Cloudflare-challenge solving + a Google referer) for walled / JS-rendered
+   pages. The walled sources above always use the browser; everything else tries HTTP first and
+   falls back to the browser only if the page comes back empty.
+2. **Clean markdown** — `trafilatura` strips boilerplate (nav, ads, language switchers) and
+   emits markdown with links preserved.
+3. **Excerpts (optional)** — one call to any OpenAI-compatible model (Groq free tier by
+   default) returns the passages that answer your `objective`. Also cleans up social-page noise
+   (sign-in modals, etc.) down to the data you want.
+
+Why a browser at all: Reddit/LinkedIn/Instagram/X block plain HTTP at the TLS-fingerprint /
+"network security" layer — `requests`, `curl`, browser-TLS-impersonation (`curl_cffi`), and
+the old `.json` endpoints all get 403, even from a clean residential IP. Only a real browser
+loading the human HTML page gets through. (The "no auth needed, just hit `.json`" Reddit
+tricks floating around are dead as of mid-2026.)
+
+## Dependencies (honest)
+
+| extra | pulls in | notes |
+|---|---|---|
+| base | `trafilatura` (+ lxml, etc.) | pure pip, no system deps |
+| `[js]` | `scrapling[fetchers]` → patchright/playwright + a stealth browser | `scrapling install` downloads a browser (~hundreds of MB). Heavy, but it's what beats the walls. |
+| `[pdf]` | `pymupdf` | |
+| excerpts | none extra | needs an OpenAI-compatible API key (`GROQ_API_KEY`, free) — markdown works without it |
+
+## Limits & responsible use
+
+- **Public data only.** No login, no auth bypass, no paywall defeat (hard paywalls stay blocked — that's by design).
+- **Respect each site's Terms of Service and `robots.txt`.** You are responsible for how you use it.
+- The stealth browser presents as a normal browser; keep request rates reasonable.
+- Walled sites change defenses over time — the live test suite (`tests/test_live.py`, run `pytest -m live`) is the canary that flags when a method stops working.
+
+## Testing
 
 ```sh
-pith --from companies.csv                  # markdown, per-label sections (default)
-pith --from companies.csv --format table   # compact: status / bytes / target + summary
-pith --from companies.csv --format json    # machine-readable {results, errors}
-pith --from companies.csv --workers 8       # parallel fetches
+pytest -m "not live"   # fast offline unit tests (routing, parsing) — no network
+pytest -m live         # hits the real walled sites; the canary for changed defenses
+python benchmarks/source_coverage.py   # full per-source coverage run
 ```
-
-Progress prints to stderr, so `--format json > out.json` stays clean. One bad URL is
-reported in `errors`, never sinks the batch. See `examples/companies.csv`.
-
-## Social / bot-protected sites
-
-Reddit, LinkedIn, and Instagram hard-block plain HTTP at the edge (TLS-fingerprint /
-"network security" walls — `.json` APIs and `requests`/`curl` all get 403, even with
-browser-impersonated TLS). pith routes these through the stealth browser
-automatically (no `render_js` needed) and gets the **public** content:
-
-| site | works on | what you get |
-|---|---|---|
-| Reddit | subreddits, posts | titles, post text, comments |
-| LinkedIn | public company & person pages | headline, about, experience, education, posts |
-| Instagram | public profiles & posts | bio, captions |
-
-Public data only — anything behind a login wall isn't returned (LinkedIn person pages
-include a "sign in to view full profile" notice; the public fields above still come through).
-Needs the `[js]` extra + `scrapling install`.
-
-## How it works (the whole thing)
-
-1. **Fetch** — `trafilatura` for normal pages (fast, no browser); a **stealth browser** (`scrapling`, with Cloudflare-challenge solving + a Google referer) for JS-rendered and bot-protected pages. Reddit/LinkedIn/Instagram always use the browser.
-2. **Clean markdown** — `trafilatura` strips boilerplate (nav, ads, language switchers) and emits markdown with links preserved. Often *cleaner* than the paid API, which leaves that junk in.
-3. **Excerpts (optional)** — one call to any OpenAI-compatible model (Groq free tier by default) returns the passages that answer your `objective`. This is also what cleans up social-page noise (sign-in modals, etc.) down to the data you want.
-
-No API key for the markdown. For excerpts, set `GROQ_API_KEY` (free at console.groq.com) or pass
-`Extractor(llm_api_key=..., llm_base_url=..., llm_model=...)` to point at any provider.
 
 ## Why this exists
 
-The paid Extract API is a thin wrapper around: a scraper + a boilerplate stripper + one optional LLM call.
-All three are free. This is that, packaged.
-
-## Test Results
-
-All 13 sources verified working (2026-06-21):
-
-| source | type | status |
-|---|---|---|
-| nytimes.com | paywall | ✓ |
-| medium.com | js-rendered | ✓ |
-| github.com | public | ✓ |
-| Reddit | bot-protected | ✓ |
-| LinkedIn | bot-protected | ✓ |
-| Instagram | bot-protected | ✓ |
-| Bloomberg | paywall | ✓ |
-| WSJ | paywall | ✓ |
-| Guardian | soft-paywall | ✓ |
-| FT | paywall | ✓ |
-| Substack | js-rendered | ✓ |
-| arXiv | public | ✓ |
-| BBC | public | ✓ |
-
-**Result:** 13/13 sources extract cleanly. No false positives. Ready for release.
+The paid Extract API is a thin wrapper around: a scraper + a boilerplate stripper + one
+optional LLM call. All three are free. This is that, packaged.
