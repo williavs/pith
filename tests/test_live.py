@@ -25,12 +25,18 @@ CONTENT_SOURCES = [
     ("trustpilot",     "https://www.trustpilot.com/review/stripe.com",         3000, ["stripe", "review"]),
 ]
 
-# partials: we only guarantee identity/metadata, not full body
+# partials: we only guarantee *some* public content, not full body or any specific keyword
+# (e.g. a Threads handle page shows posts that needn't mention the handle).
 PARTIAL_SOURCES = [
-    ("facebook", "https://www.facebook.com/NASA/",        300, ["nasa"]),
-    ("threads",  "https://www.threads.net/@nasa",         300, ["nasa"]),
-    ("glassdoor","https://www.glassdoor.com/Overview/Working-at-Stripe-EI_IE671932.11,17.htm", 300, ["stripe"]),
+    ("facebook", "https://www.facebook.com/NASA/",        300),
+    ("threads",  "https://www.threads.net/@nasa",         300),
+    ("glassdoor","https://www.glassdoor.com/Overview/Working-at-Stripe-EI_IE671932.11,17.htm", 300),
 ]
+
+# phrases that mean we got a login/anti-bot wall instead of content
+WALL_PHRASES = ("you must log in to continue", "sign in to continue", "are you a robot",
+                "verify you are human", "press & hold", "access denied",
+                "enable javascript and cookies")
 
 
 @pytest.fixture(scope="module")
@@ -49,9 +55,11 @@ def test_source_yields_content(ex, name, url, min_bytes, needles):
 
 
 @pytest.mark.live
-@pytest.mark.parametrize("name,url,min_bytes,needles", PARTIAL_SOURCES, ids=[s[0] for s in PARTIAL_SOURCES])
-def test_partial_source_yields_identity(ex, name, url, min_bytes, needles):
+@pytest.mark.parametrize("name,url,min_bytes", PARTIAL_SOURCES, ids=[s[0] for s in PARTIAL_SOURCES])
+def test_partial_source_yields_some_content(ex, name, url, min_bytes):
+    """Partials must return *some* public content and must NOT be a pure login wall."""
     out = ex.extract(urls=[url])
     assert not out.errors, f"{name}: {out.errors}"
     md = out.results[0].excerpts[0].lower()
-    assert len(md) >= min_bytes and any(n in md for n in needles), f"{name}: {len(md)}B, needles missing"
+    assert len(md) >= min_bytes, f"{name}: only {len(md)}B"
+    assert not any(p in md for p in WALL_PHRASES), f"{name}: looks like a login wall"

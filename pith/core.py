@@ -106,6 +106,18 @@ def _looks_thin(markdown: Optional[str]) -> bool:
     return not markdown or len(markdown.strip()) < 200
 
 
+# A browser result this small is usually a transient anti-bot wall (CAPTCHA / rate limit),
+# not the real page — worth one more attempt. Genuinely small pages just stay small.
+_WALL_RETRY_THRESHOLD = 1000
+
+
+def _extract_md(html: str) -> str:
+    """HTML -> markdown (links + metadata kept). Empty string if nothing extractable."""
+    return trafilatura.extract(
+        html, output_format="markdown", include_links=True, with_metadata=True
+    ) or ""
+
+
 def _split_frontmatter(md: str) -> tuple[dict, str]:
     """trafilatura prepends a `--- key: val ---` block when with_metadata=True. Pull it off."""
     meta: dict = {}
@@ -159,15 +171,27 @@ class Extractor:
 
     def _to_markdown(self, url: str, render_js: object) -> tuple[dict, str]:
         use_browser = render_js is True or _needs_browser(url)  # reddit/linkedin force the browser
-        html = _fetch_js(url) if use_browser else _fetch_static(url)
-        md = trafilatura.extract(html, output_format="markdown", include_links=True, with_metadata=True)
-        if render_js == "auto" and not use_browser and _looks_thin(md):
-            # static gave us little — the page is probably JS-rendered, retry with a browser
-            html = _fetch_js(url)
-            md = trafilatura.extract(html, output_format="markdown", include_links=True, with_metadata=True)
+        if use_browser:
+            md = self._browser_markdown(url)
+        else:
+            md = _extract_md(_fetch_static(url))
+            if render_js == "auto" and _looks_thin(md):
+                md = self._browser_markdown(url)  # static came up thin → it's JS-rendered
         if not md:
             raise RuntimeError("no extractable content")
         return _split_frontmatter(md)
+
+    def _browser_markdown(self, url: str, attempts: int = 2) -> str:
+        """Render in the stealth browser, retrying when the result looks like a transient
+        wall. Returns the best (largest) markdown seen; '' if every attempt was empty."""
+        best = ""
+        for _ in range(attempts):
+            md = _extract_md(_fetch_js(url))
+            if len(md.strip()) >= _WALL_RETRY_THRESHOLD:
+                return md  # real content — done
+            if len(md) > len(best):
+                best = md
+        return best
 
     def _excerpts(self, markdown: str, objective: str) -> list[str]:
         """One LLM call: return the passages that answer the objective."""
