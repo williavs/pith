@@ -9,11 +9,45 @@ order — the http field is the URL). '#' lines and blanks are skipped.
 import argparse
 import csv
 import json
+import re
 import sys
+import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict
 
 from .core import Extractor, Result
+
+
+def read_sitemap(url: str, match: str | None = None, limit: int | None = None) -> list[tuple[str | None, str]]:
+    """Gather a whole doc site: fetch sitemap.xml, return its <loc> URLs as (None, url) targets.
+    `match` keeps only locs containing that substring (e.g. '/router/' for one section).
+    Follows a <sitemapindex> one level deep. `limit` caps the result (and warns on the cap)."""
+    def fetch(u: str) -> str:
+        req = urllib.request.Request(u, headers={"User-Agent": "Mozilla/5.0 pith"})
+        return urllib.request.urlopen(req, timeout=30).read().decode("utf-8", "ignore")
+
+    def locs(xml: str) -> list[str]:
+        return re.findall(r"<loc>\s*([^<\s]+)\s*</loc>", xml)
+
+    xml = fetch(url)
+    found = locs(xml)
+    # a sitemap index lists child sitemaps, not pages — recurse one level
+    if "<sitemapindex" in xml:
+        pages: list[str] = []
+        for child in found:
+            try:
+                pages.extend(locs(fetch(child)))
+            except Exception:  # ponytail: one bad child sitemap shouldn't sink the crawl
+                continue
+        found = pages
+    if match:
+        found = [u for u in found if match in u]
+    seen: set[str] = set()
+    uniq = [u for u in found if not (u in seen or seen.add(u))]
+    if limit and len(uniq) > limit:
+        print(f"sitemap: {len(uniq)} urls, capping to --limit {limit}", file=sys.stderr)
+        uniq = uniq[:limit]
+    return [(None, u) for u in uniq]
 
 
 def read_targets(path: str) -> list[tuple[str | None, str]]:
@@ -96,6 +130,9 @@ def main() -> None:
     ap.add_argument("url", nargs="?", help="a single URL (omit when using --from)")
     ap.add_argument("objective", nargs="?", help="optional: return only passages answering this (needs GROQ_API_KEY)")
     ap.add_argument("--from", dest="from_file", metavar="FILE", help="batch: read URLs from a list file (txt or csv)")
+    ap.add_argument("--sitemap", metavar="URL", help="batch: crawl a sitemap.xml and gather every page (filter with --match)")
+    ap.add_argument("--match", metavar="SUBSTR", help="with --sitemap: keep only URLs containing this substring")
+    ap.add_argument("--limit", type=int, help="with --sitemap: cap number of pages gathered")
     ap.add_argument("--format", choices=["md", "json", "table"], default="md", help="batch output format (default md)")
     ap.add_argument("--workers", type=int, default=1, help="batch: parallel fetches (default 1)")
     ap.add_argument("--full", action="store_true", help="include full page markdown")
@@ -105,10 +142,11 @@ def main() -> None:
     render_js = True if args.js else "auto"
     ex = Extractor()
 
-    if args.from_file:
-        targets = read_targets(args.from_file)
+    if args.sitemap or args.from_file:
+        targets = (read_sitemap(args.sitemap, match=args.match, limit=args.limit)
+                   if args.sitemap else read_targets(args.from_file))
         if not targets:
-            ap.error(f"no URLs found in {args.from_file}")
+            ap.error("no URLs found (check --sitemap/--match or the --from file)")
         rows = run_batch(ex, targets, objective=args.objective, full=args.full,
                          render_js=render_js, workers=args.workers)
         print(render(rows, args.format))
