@@ -27,6 +27,16 @@ def test_looks_thin_boundary():
     assert not _looks_thin("x" * 200)
 
 
+def test_jsonfmt_emits_event_plus_extra():
+    """Trace mode: each record -> one JSON object, message=event, extra= fields ride along."""
+    import json, logging
+    from pith.cli import _JsonFmt
+    rec = logging.LogRecord("pith", logging.INFO, "", 0, "tier", (), None)
+    rec.url = "https://x.com"; rec.tier = "browser"; rec.ms = 4655.9
+    d = json.loads(_JsonFmt().format(rec))
+    assert d == {"event": "tier", "url": "https://x.com", "tier": "browser", "ms": 4655.9}
+
+
 def test_concurrent_extract_preserves_order_and_errors(monkeypatch):
     """The list-enrichment fast path: concurrency must keep input order and isolate
     failures, same contract as the sequential path."""

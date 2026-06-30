@@ -12,13 +12,21 @@ A drop-in for the Parallel Extract API: same call shape, same result fields, $0.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass, field
+from time import perf_counter
 from typing import Optional
 
 import trafilatura
+
+log = logging.getLogger("pith")  # silent unless the CLI --verbose installs a handler
+
+
+def _ms(t0: float) -> float:
+    return round((perf_counter() - t0) * 1000, 1)
 
 
 @dataclass
@@ -228,14 +236,17 @@ class Extractor:
 
     def _extract_one(self, url, objective, full_content, render_js):
         """One URL -> Result, or an error dict. The unit of work for the batch loop."""
+        t = perf_counter()
         try:
             meta, body = self._to_markdown(url, render_js)
             r = Result(url=url, title=meta.get("title"), publish_date=meta.get("date"))
             if full_content:
                 r.full_content = body
             r.excerpts = self._excerpts(body, objective) if objective else [body]
+            log.info("url_done", extra={"url": url, "ms": _ms(t), "bytes": len(body), "ok": True})
             return r
         except Exception as e:  # one bad URL shouldn't sink the batch
+            log.info("url_done", extra={"url": url, "ms": _ms(t), "ok": False, "err": str(e)[:120]})
             return {"url": url, "error": str(e)}
 
     @staticmethod
@@ -248,7 +259,9 @@ class Extractor:
 
     def _to_markdown(self, url: str, render_js: object) -> tuple[dict, str]:
         if _is_document(url):  # PDF/Office/epub -> MarkItDown, not trafilatura
+            t = perf_counter()
             title, body = _fetch_document(url)
+            log.debug("tier", extra={"url": url, "tier": "document", "ms": _ms(t), "bytes": len(body)})
             if not body:
                 raise RuntimeError("no extractable content")
             return ({"title": title} if title else {}), body
@@ -268,26 +281,33 @@ class Extractor:
         comes up thin. Both are fast (~hundreds of ms). Returns best markdown seen ('' if
         both fail). Impersonation rescues sites that 403 plain urllib (WSJ et al.)."""
         md = ""
+        t = perf_counter()
         try:
             md = _extract_md(_fetch_static(url))
-        except Exception:
-            pass
+        except Exception as e:
+            log.debug("tier_fail", extra={"url": url, "tier": "static", "err": str(e)[:80]})
         if not _looks_thin(md):
+            log.debug("tier", extra={"url": url, "tier": "static", "ms": _ms(t), "bytes": len(md)})
             return md
+        t = perf_counter()
         try:
             imp = _extract_md(_fetch_impersonate(url))
             if len(imp) > len(md):
                 md = imp
-        except Exception:
-            pass  # curl_cffi absent or still blocked — caller falls back to the browser
+            log.debug("tier", extra={"url": url, "tier": "impersonate", "ms": _ms(t), "bytes": len(md)})
+        except Exception as e:
+            log.debug("tier_fail", extra={"url": url, "tier": "impersonate", "err": str(e)[:80]})
         return md
 
     def _browser_markdown(self, url: str, attempts: int = 2) -> str:
         """Render in the stealth browser, retrying when the result looks like a transient
         wall. Returns the best (largest) markdown seen; '' if every attempt was empty."""
         best = ""
-        for _ in range(attempts):
+        for i in range(attempts):
+            t = perf_counter()
             md = _extract_md(_fetch_js(url))
+            log.debug("tier", extra={"url": url, "tier": "browser", "attempt": i + 1,
+                                     "ms": _ms(t), "bytes": len(md)})
             if len(md.strip()) >= _WALL_RETRY_THRESHOLD:
                 return md  # real content — done
             if len(md) > len(best):

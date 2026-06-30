@@ -9,6 +9,7 @@ order — the http field is the URL). '#' lines and blanks are skipped.
 import argparse
 import csv
 import json
+import logging
 import re
 import sys
 import urllib.request
@@ -16,6 +17,33 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict
 
 from .core import Extractor, Result
+
+log = logging.getLogger("pith")
+
+
+class _JsonFmt(logging.Formatter):
+    """One compact JSON object per log record: the message is the `event`, any structured
+    `extra=` fields ride alongside. No deps — stdlib logging + json."""
+    _STD = set(logging.makeLogRecord({}).__dict__) | {"taskName", "message"}
+
+    def format(self, rec):
+        d = {"event": rec.getMessage()}
+        for k, v in rec.__dict__.items():
+            if k not in self._STD and k not in ("msg", "args"):
+                d[k] = v
+        return json.dumps(d, default=str)
+
+
+def _enable_trace():
+    """--verbose: stream every pipeline/network step as NDJSON on stderr (results stay on
+    stdout). Surfaces pith's tier/timing/concurrency events plus scrapling's network logs."""
+    h = logging.StreamHandler(sys.stderr)
+    h.setFormatter(_JsonFmt())
+    for name, lvl in (("pith", logging.DEBUG), ("scrapling", logging.INFO)):
+        lg = logging.getLogger(name)
+        lg.handlers[:] = [h]
+        lg.setLevel(lvl)
+        lg.propagate = False
 
 
 def read_sitemap(url: str, match: str | None = None, limit: int | None = None) -> list[tuple[str | None, str]]:
@@ -119,14 +147,18 @@ def read_targets(path: str) -> list[tuple[str | None, str]]:
     return targets
 
 
-def run_batch(ex, targets, *, objective, full, render_js, workers):
+def run_batch(ex, targets, *, objective, full, render_js, workers, verbose=False):
     """Drive the extractor over targets, one extract() per URL so we can show progress
     and parallelize. Returns (label, url, Result | error-dict) rows in input order."""
     total = len(targets)
+    log.info("batch_start", extra={"n": total, "workers": workers})
 
     def one(item):
         i, (label, url) = item
-        print(f"[{i}/{total}] {label or url}", file=sys.stderr, flush=True)
+        if verbose:
+            log.info("fetch_start", extra={"i": i, "n": total, "url": url, "label": label})
+        else:
+            print(f"[{i}/{total}] {label or url}", file=sys.stderr, flush=True)
         out = ex.extract(urls=[url], objective=objective, full_content=full, render_js=render_js)
         return (label, url, out.results[0] if out.results else out.errors[0])
 
@@ -135,8 +167,12 @@ def run_batch(ex, targets, *, objective, full, render_js, workers):
         # ponytail: thread the fetches; the stealth browser launches per-call so it's
         # thread-safe enough here. Drop --workers to 1 if a site gets flaky under load.
         with ThreadPoolExecutor(max_workers=workers) as pool:
-            return list(pool.map(one, items))
-    return [one(it) for it in items]
+            rows = list(pool.map(one, items))
+    else:
+        rows = [one(it) for it in items]
+    ok = sum(1 for _, _, r in rows if isinstance(r, Result))
+    log.info("batch_done", extra={"n": total, "ok": ok, "errors": total - ok})
+    return rows
 
 
 def render(rows, fmt: str) -> str:
@@ -192,8 +228,11 @@ def main() -> None:
     ap.add_argument("--workers", type=int, default=1, help="batch: parallel fetches (default 1)")
     ap.add_argument("--full", action="store_true", help="include full page markdown")
     ap.add_argument("--js", action="store_true", help="force a real browser (JS-rendered / bot-protected pages)")
+    ap.add_argument("--verbose", "-v", action="store_true", help="stream a structured NDJSON trace of every pipeline step (tiers, timing, concurrency, network) to stderr")
     args = ap.parse_args()
 
+    if args.verbose:
+        _enable_trace()
     render_js = True if args.js else "auto"
     ex = Extractor()
 
@@ -209,10 +248,12 @@ def main() -> None:
         if args.about:  # fetch-budget gate: rank by relevance, keep top --budget
             n = len(targets)
             targets = gate(targets, args.about, budget=args.budget)
-            print(f"gate: ranked {n} candidates by '{args.about}'"
-                  + (f", fetching top {args.budget}" if args.budget else ""), file=sys.stderr)
+            log.info("gate_ranked", extra={"candidates": n, "kept": len(targets), "budget": args.budget, "query": args.about})
+            if not args.verbose:
+                print(f"gate: ranked {n} candidates by '{args.about}'"
+                      + (f", fetching top {args.budget}" if args.budget else ""), file=sys.stderr)
         rows = run_batch(ex, targets, objective=args.objective, full=args.full,
-                         render_js=render_js, workers=args.workers)
+                         render_js=render_js, workers=args.workers, verbose=args.verbose)
         print(render(rows, args.format))
         return
 
