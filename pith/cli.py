@@ -186,6 +186,8 @@ def main() -> None:
     ap.add_argument("--crawl", metavar="URL", help="batch: from a homepage, follow links into about/contact/team/... sections")
     ap.add_argument("--match", metavar="SUBSTR", help="with --sitemap: keep only URLs containing this substring")
     ap.add_argument("--limit", type=int, default=25, help="cap pages gathered by --sitemap/--crawl (default 25)")
+    ap.add_argument("--about", metavar="QUERY", help="batch: rank candidates by relevance to this (e.g. a target name+company) and fetch the most relevant first")
+    ap.add_argument("--budget", type=int, help="with --about: fetch only the top-N most relevant candidates (skip the rest — saves the 4-5s/page walled-fetch cost)")
     ap.add_argument("--format", choices=["md", "json", "table"], default="md", help="batch output format (default md)")
     ap.add_argument("--workers", type=int, default=1, help="batch: parallel fetches (default 1)")
     ap.add_argument("--full", action="store_true", help="include full page markdown")
@@ -204,6 +206,11 @@ def main() -> None:
             targets = read_targets(args.from_file)
         if not targets:
             ap.error("no URLs found (check --sitemap/--match or the --from file)")
+        if args.about:  # fetch-budget gate: rank by relevance, keep top --budget
+            n = len(targets)
+            targets = gate(targets, args.about, budget=args.budget)
+            print(f"gate: ranked {n} candidates by '{args.about}'"
+                  + (f", fetching top {args.budget}" if args.budget else ""), file=sys.stderr)
         rows = run_batch(ex, targets, objective=args.objective, full=args.full,
                          render_js=render_js, workers=args.workers)
         print(render(rows, args.format))
