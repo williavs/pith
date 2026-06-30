@@ -19,8 +19,8 @@ pip install "pith @ git+https://github.com/williavs/pith"
 pip install "pith[js] @ git+https://github.com/williavs/pith"
 scrapling install          # one-time: downloads the stealth browser (~a few hundred MB)
 
-# + PDFs
-pip install "pith[pdf] @ git+https://github.com/williavs/pith"
+# + documents (PDF, Word, PowerPoint, Excel, epub, images) → markdown via MarkItDown
+pip install "pith[docs] @ git+https://github.com/williavs/pith"
 ```
 
 Python 3.10+ (developed and tested on 3.13).
@@ -79,6 +79,8 @@ it does not log in, bypass auth, or defeat paywalls.
 | Glassdoor | company overview | browser |
 | arXiv, GitHub | public pages | fast HTTP |
 | Guardian, BBC, Substack, FT (sections) | article / section content | fast HTTP |
+| WSJ (free/section pages) | article text | impersonation tier |
+| PDF / Word / PowerPoint / Excel / epub | document text → markdown | MarkItDown (`[docs]`) |
 
 **🟡 Partial** — identity/metadata, body behind a login wall or flaky:
 
@@ -101,10 +103,12 @@ once automatically, but a hard wall on both attempts returns thin/partial conten
 
 ## How it works
 
-1. **Fetch** — `trafilatura` for normal pages (fast, no browser); a **stealth browser**
-   (`scrapling`, with Cloudflare-challenge solving + a Google referer) for walled / JS-rendered
-   pages. The walled sources above always use the browser; everything else tries HTTP first and
-   falls back to the browser only if the page comes back empty.
+1. **Fetch** — three tiers, cheapest first. Plain HTTP (`trafilatura`) for normal pages; if
+   that 403s or comes back thin, **browser-TLS impersonation** (`curl_cffi`) — ~250 ms, rescues
+   sites that fingerprint the TLS handshake but still serve real HTML (WSJ et al.); if *that's*
+   still thin, the **stealth browser** (`scrapling`, Cloudflare-solve + Google referer, ~3–8 s).
+   The walled sources above skip straight to the browser. Non-HTML documents (PDF/Office/epub)
+   go through **MarkItDown** instead of trafilatura.
 2. **Clean markdown** — `trafilatura` strips boilerplate (nav, ads, language switchers) and
    emits markdown with links preserved.
 3. **Excerpts (optional)** — one call to any OpenAI-compatible model (Groq free tier by
@@ -122,8 +126,9 @@ tricks floating around are dead as of mid-2026.)
 | extra | pulls in | notes |
 |---|---|---|
 | base | `trafilatura` (+ lxml, etc.) | pure pip, no system deps |
-| `[js]` | `scrapling[fetchers]` → patchright/playwright + a stealth browser | `scrapling install` downloads a browser (~hundreds of MB). Heavy, but it's what beats the walls. |
-| `[pdf]` | `pymupdf` | |
+| `[js]` | `scrapling[fetchers]` → patchright/playwright + a stealth browser; `curl_cffi` for the impersonation tier | `scrapling install` downloads a browser (~hundreds of MB). Heavy, but it's what beats the walls. |
+| `[docs]` | `markitdown[all]` | PDF/Word/PowerPoint/Excel/epub/images → markdown |
+| `[pdf]` | `pymupdf` | lighter than `[docs]` if PDFs are all you need |
 | excerpts | none extra | needs an OpenAI-compatible API key (`GROQ_API_KEY`, free) — markdown works without it |
 
 ## Limits & responsible use

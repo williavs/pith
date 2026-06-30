@@ -10,10 +10,13 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# JS-rendered / bot-protected pages (Reddit, LinkedIn, …): a real stealth browser.
+# JS-rendered / bot-protected pages (Reddit, LinkedIn, …): a real stealth browser,
+# plus curl_cffi for the cheap TLS-impersonation tier (rescues 403s without the browser).
 # After installing this extra, run:  scrapling install   (downloads the browser once)
-js = ["scrapling[fetchers]>=0.4"]
-# PDFs:
+js = ["scrapling[fetchers]>=0.4", "curl_cffi>=0.7"]
+# Non-HTML documents (PDF, Word, PowerPoint, Excel, epub, images) -> markdown:
+docs = ["markitdown[all]>=0.0.1"]
+# PDFs only (lighter than [docs] if that's all you need):
 pdf = ["pymupdf>=1.24"]
 
 [project.scripts]

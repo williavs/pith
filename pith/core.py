@@ -47,6 +47,42 @@ def _fetch_static(url: str) -> str:
     return html
 
 
+def _fetch_impersonate(url: str) -> str:
+    """Middle tier: fetch with a real browser's TLS/JA3 fingerprint via curl_cffi.
+    Beats plain-HTTP 403/401s on sites that fingerprint the TLS handshake but still
+    serve real HTML (WSJ, some news/B2B) — at ~250ms vs the 5-8s stealth browser.
+    Does NOT beat JS-only shells (Reddit/LinkedIn need the browser). Optional dep."""
+    try:
+        from curl_cffi import requests as creq
+    except ImportError as e:
+        raise RuntimeError("impersonation tier needs: pip install 'pith[js]'") from e
+    r = creq.get(url, impersonate="chrome", timeout=20)
+    r.raise_for_status()
+    return r.text
+
+
+# Non-HTML documents: route through MarkItDown (PDF/Office/epub -> markdown) instead of
+# trafilatura, which only understands HTML. Extension-based; covers the common case.
+_DOC_EXTS = (".pdf", ".docx", ".pptx", ".xlsx", ".doc", ".ppt", ".xls", ".epub")
+
+
+def _is_document(url: str) -> bool:
+    # ponytail: extension match handles the 90% case; sniff Content-Type if a real
+    # doc URL without an extension shows up.
+    path = urllib.parse.urlsplit(url).path.lower()
+    return path.endswith(_DOC_EXTS)
+
+
+def _fetch_document(url: str) -> tuple[Optional[str], str]:
+    """PDF/Office/epub URL -> (title, markdown) via MarkItDown. Optional [docs] extra."""
+    try:
+        from markitdown import MarkItDown
+    except ImportError as e:
+        raise RuntimeError("document extraction needs: pip install 'pith[docs]'") from e
+    res = MarkItDown().convert(url)
+    return getattr(res, "title", None), res.text_content or ""
+
+
 def _fetch_js(url: str) -> str:
     """JS path: a real stealth browser renders the page, then we read the DOM.
 
@@ -170,16 +206,40 @@ class Extractor:
         return out
 
     def _to_markdown(self, url: str, render_js: object) -> tuple[dict, str]:
+        if _is_document(url):  # PDF/Office/epub -> MarkItDown, not trafilatura
+            title, body = _fetch_document(url)
+            if not body:
+                raise RuntimeError("no extractable content")
+            return ({"title": title} if title else {}), body
         use_browser = render_js is True or _needs_browser(url)  # reddit/linkedin force the browser
         if use_browser:
             md = self._browser_markdown(url)
         else:
-            md = _extract_md(_fetch_static(url))
+            md = self._cheap_markdown(url)  # plain HTTP, then TLS-impersonation if that 403s/thins
             if render_js == "auto" and _looks_thin(md):
-                md = self._browser_markdown(url)  # static came up thin → it's JS-rendered
+                md = self._browser_markdown(url)  # still thin → it's a JS-rendered shell
         if not md:
             raise RuntimeError("no extractable content")
         return _split_frontmatter(md)
+
+    def _cheap_markdown(self, url: str) -> str:
+        """No-browser tiers: plain HTTP, then browser-TLS impersonation if that fails or
+        comes up thin. Both are fast (~hundreds of ms). Returns best markdown seen ('' if
+        both fail). Impersonation rescues sites that 403 plain urllib (WSJ et al.)."""
+        md = ""
+        try:
+            md = _extract_md(_fetch_static(url))
+        except Exception:
+            pass
+        if not _looks_thin(md):
+            return md
+        try:
+            imp = _extract_md(_fetch_impersonate(url))
+            if len(imp) > len(md):
+                md = imp
+        except Exception:
+            pass  # curl_cffi absent or still blocked — caller falls back to the browser
+        return md
 
     def _browser_markdown(self, url: str, attempts: int = 2) -> str:
         """Render in the stealth browser, retrying when the result looks like a transient
