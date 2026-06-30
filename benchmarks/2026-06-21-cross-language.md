@@ -12,7 +12,7 @@ Reproduce: `benchmarks/run_bench.sh` (needs `../.venv`, `go`, `cargo`).
 1. **The extraction step is milliseconds; the stealth browser is seconds.** On a walled
    site pith spends 5–8 s in the browser and ~50–200 ms extracting. Porting the
    extraction step to a faster language saves ~2% of wall-clock on those pages. The
-   browser dominates, and it's a Python-only asset (`scrapling`/Camoufox).
+   browser dominates, and it's a Python-only asset (`scrapling`→patchright/Chromium).
 2. **For normal pages, Go/Rust are 3–15× faster at extraction** — but only `trafilatura`
    (the algorithm pith uses) stays robust across page types. Readability-family ports are
    the fastest *because they give up* on non-article pages (HN comments, MDN docs → 26 B).
@@ -99,7 +99,7 @@ does *each piece* cost, and is it portable?"
 | core piece | what it is | cost | portable to Go/Rust? |
 |---|---|---|---|
 | static fetch | trafilatura/urllib GET | ~200–300 ms (network) | yes, trivial (net/http, reqwest/ureq) |
-| **stealth browser** | scrapling + Camoufox, Cloudflare-solve | **5,000–8,000 ms** | **no mature equivalent — the moat** |
+| **stealth browser** | scrapling→patchright/Chromium, Cloudflare-solve | **5,000–8,000 ms** | **no mature equivalent — the moat** |
 | extraction → md | trafilatura | 50–200 ms | yes (go-trafilatura best) |
 | thin-content fallback | static→browser if <200 B | logic only | yes, trivial |
 | browser routing | domain allowlist match | µs | yes, trivial |
@@ -142,11 +142,13 @@ Honest, evidence-based — not "Rust is faster so rewrite it."
 The reason pith exists over plain trafilatura is the walled-site path, and that path is
 the one thing Go/Rust can't replicate today. Concretely:
 
-- **The moat is a browser binary, not Python code.** `scrapling`'s `StealthyFetcher`
-  drives **Camoufox** — a C++-engine-level patched Firefox fork. Fingerprint rotation and
-  canvas/WebGL/WebRTC/timezone spoofing happen *inside Firefox's C++ layer*, not as JS
-  injection (which Cloudflare Turnstile now trivially detects). Matching it means forking
-  Firefox. No Go or Rust project has.
+- **The moat is a patched browser + a solve loop, not Python code.** Correction (verified
+  2026-06-30): `scrapling` 0.4.9's `StealthyFetcher` drives **patchright** — a patched
+  Playwright that strips the CDP/automation leaks Cloudflare detects — over **Chromium**,
+  plus a `solve_cloudflare` loop and a Google referer. (Earlier notes here said "Camoufox";
+  that was wrong — no camoufox is installed or imported. Camoufox is a real anti-detect
+  Firefox fork, just not the one pith uses.) The point stands either way: the hard part is a
+  maintained patched-browser-plus-solver, and no Go/Rust project ships an equivalent.
 - **Go: cannot replicate today.** `go-rod/stealth` does JS-injection evasions only (the
   detectable kind, last meaningful push 2024). No mature Turnstile-solving browser lib.
   TLS-impersonation (utls/cycletls) is strong but solves the wrong layer — these sites

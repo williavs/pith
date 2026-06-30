@@ -50,6 +50,38 @@ def read_sitemap(url: str, match: str | None = None, limit: int | None = None) -
     return [(None, u) for u in uniq]
 
 
+# GTM-relevant sections: where decision-maker signal lives on a company site.
+_SECTIONS = ("about", "contact", "team", "leadership", "people", "our-team",
+             "company", "management", "founders", "staff", "careers", "jobs")
+
+
+def _section_links(seed: str, html: str, sections, limit: int) -> list[tuple[str | None, str]]:
+    """Pure: from a homepage's HTML, keep same-domain links whose path hits a section.
+    Seed first, then matches in document order, deduped, capped. (Tested offline.)"""
+    from urllib.parse import urljoin, urlsplit
+    host = urlsplit(seed).netloc
+    out, seen = [(None, seed)], {seed}
+    for href in re.findall(r'href=["\']([^"\']+)', html):
+        u = urljoin(seed, href).split("#")[0]
+        sp = urlsplit(u)
+        if sp.netloc == host and any(s in sp.path.lower() for s in sections) and u not in seen:
+            seen.add(u)
+            out.append((None, u))
+            if len(out) >= limit:
+                break
+    return out
+
+
+def crawl_site(seed: str, sections=_SECTIONS, limit: int = 25) -> list[tuple[str | None, str]]:
+    """Strategic crawl: fetch a homepage, follow one level of same-domain links into the
+    high-value sections (about/contact/team/...). One level — nav links cover the GTM
+    sections, and walled pages cost ~4-5s each so coverage is the wrong goal anyway.
+    ponytail: one level; recurse if a real site buries its team page deeper than nav."""
+    req = urllib.request.Request(seed, headers={"User-Agent": "Mozilla/5.0 pith"})
+    html = urllib.request.urlopen(req, timeout=30).read().decode("utf-8", "ignore")
+    return _section_links(seed, html, sections, limit)
+
+
 def read_targets(path: str) -> list[tuple[str | None, str]]:
     """Parse a URL-list file into (label, url) pairs. Bare URL -> label None.
     Handles plain .txt (one URL per line) and .csv (label,url or url,label)."""
@@ -131,8 +163,9 @@ def main() -> None:
     ap.add_argument("objective", nargs="?", help="optional: return only passages answering this (needs GROQ_API_KEY)")
     ap.add_argument("--from", dest="from_file", metavar="FILE", help="batch: read URLs from a list file (txt or csv)")
     ap.add_argument("--sitemap", metavar="URL", help="batch: crawl a sitemap.xml and gather every page (filter with --match)")
+    ap.add_argument("--crawl", metavar="URL", help="batch: from a homepage, follow links into about/contact/team/... sections")
     ap.add_argument("--match", metavar="SUBSTR", help="with --sitemap: keep only URLs containing this substring")
-    ap.add_argument("--limit", type=int, help="with --sitemap: cap number of pages gathered")
+    ap.add_argument("--limit", type=int, default=25, help="cap pages gathered by --sitemap/--crawl (default 25)")
     ap.add_argument("--format", choices=["md", "json", "table"], default="md", help="batch output format (default md)")
     ap.add_argument("--workers", type=int, default=1, help="batch: parallel fetches (default 1)")
     ap.add_argument("--full", action="store_true", help="include full page markdown")
@@ -142,9 +175,13 @@ def main() -> None:
     render_js = True if args.js else "auto"
     ex = Extractor()
 
-    if args.sitemap or args.from_file:
-        targets = (read_sitemap(args.sitemap, match=args.match, limit=args.limit)
-                   if args.sitemap else read_targets(args.from_file))
+    if args.sitemap or args.crawl or args.from_file:
+        if args.sitemap:
+            targets = read_sitemap(args.sitemap, match=args.match, limit=args.limit)
+        elif args.crawl:
+            targets = crawl_site(args.crawl, limit=args.limit)
+        else:
+            targets = read_targets(args.from_file)
         if not targets:
             ap.error("no URLs found (check --sitemap/--match or the --from file)")
         rows = run_batch(ex, targets, objective=args.objective, full=args.full,

@@ -146,7 +146,7 @@ def _looks_thin(markdown: Optional[str]) -> bool:
 # not the real page — worth one more attempt. Genuinely small pages just stay small.
 _WALL_RETRY_THRESHOLD = 1000
 
-# Each stealth-browser fetch spins up a Camoufox instance (hundreds of MB). The cheap
+# Each stealth-browser fetch spins up a patchright/Chromium instance (hundreds of MB). The cheap
 # tiers (HTTP/impersonation) are light and scale wide, but browser fetches must stay
 # bounded or a big list OOMs the box. ponytail: 3 is safe on 16GB; bump if you have RAM.
 _BROWSER_MAX_CONCURRENCY = 3

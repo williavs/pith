@@ -1,8 +1,36 @@
 """Offline tests for the list/batch feature — no network."""
 import json
 
-from pith.cli import read_targets, run_batch, render
+from pith.cli import read_targets, run_batch, render, _section_links
 from pith.core import Result, ExtractResult
+
+
+def test_section_links_filters_dedups_bounds():
+    seed = "https://acme.com/"
+    html = '''
+      <a href="/about-us">About</a>
+      <a href="/team">Team</a> <a href="/team">Team dup</a>
+      <a href="https://twitter.com/acme">off-domain about</a>
+      <a href="/pricing">no signal section</a>
+      <a href="/contact#form">Contact</a>
+      <a href="/careers">Careers</a>
+    '''
+    got = _section_links(seed, html, ("about", "team", "contact", "careers"), limit=25)
+    urls = [u for _, u in got]
+    assert urls[0] == seed                                   # seed first
+    assert "https://acme.com/about-us" in urls
+    assert "https://acme.com/team" in urls
+    assert urls.count("https://acme.com/team") == 1          # deduped
+    assert "https://acme.com/contact" in urls                # #fragment stripped
+    assert "https://acme.com/pricing" not in urls            # not a target section
+    assert all("twitter.com" not in u for u in urls)         # off-domain dropped
+
+
+def test_section_links_respects_limit():
+    seed = "https://x.com/"
+    html = "".join(f'<a href="/about/{i}">a</a>' for i in range(50))
+    got = _section_links(seed, html, ("about",), limit=5)
+    assert len(got) == 5  # seed + 4 matches
 
 
 def test_read_targets_txt(tmp_path):
