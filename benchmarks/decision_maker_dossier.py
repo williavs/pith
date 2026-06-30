@@ -14,6 +14,7 @@ assembled markdown corpus a salesperson (or an LLM) would synthesize from.
 
 Run:  ../.venv/bin/python decision_maker_dossier.py [--workers N]
 """
+import html as _html
 import sys
 import time
 from pathlib import Path
@@ -106,6 +107,58 @@ def run(workers: int = 1):
     out_path = Path(__file__).parent / "dossier_output.md"
     out_path.write_text("\n".join(corpus))
     print(f"assembled dossier -> {out_path}  ({total_chars:,} chars of synthesizable signal)")
+
+    html_path = Path(__file__).parent / "dossier.html"
+    html_path.write_text(_render_html(results, ok, total_chars, total_ms, workers))
+    print(f"html report       -> {html_path}")
+
+
+TIER_COLOR = {"browser": "#7c3aed", "cheap": "#0891b2", "document": "#ca8a04"}
+
+
+def _render_html(results, ok, total_chars, total_ms, workers):
+    cards = []
+    for label, url, tier, dt, n, title, body in results:
+        color = TIER_COLOR.get(tier, "#555")
+        miss = "" if n > 0 else "opacity:.55;"
+        cards.append(f"""
+        <div class="card" style="{miss}">
+          <div class="head">
+            <span class="badge" style="background:{color}">{tier}</span>
+            <span class="label">{_html.escape(label)}</span>
+            <span class="meta">{dt:.0f} ms · {n:,} chars</span>
+          </div>
+          <div class="title">{_html.escape(str(title or '—'))}</div>
+          <a class="src" href="{_html.escape(url)}">{_html.escape(url)}</a>
+          <pre>{_html.escape(body[:6000])}{'…' if len(body) > 6000 else ''}</pre>
+        </div>""")
+    return f"""<!doctype html><html><head><meta charset="utf-8">
+<title>pith dossier — {TARGET}</title>
+<style>
+  body {{ font:15px/1.55 -apple-system,Segoe UI,Roboto,sans-serif; background:#0f1115; color:#e6e6e6; margin:0; padding:32px; }}
+  h1 {{ font-size:22px; margin:0 0 4px; }}
+  .sub {{ color:#9aa0aa; margin-bottom:20px; }}
+  .stats {{ display:flex; gap:24px; flex-wrap:wrap; background:#161a22; border:1px solid #232838; border-radius:10px; padding:16px 20px; margin-bottom:24px; }}
+  .stat b {{ font-size:20px; display:block; }} .stat span {{ color:#9aa0aa; font-size:13px; }}
+  .card {{ background:#161a22; border:1px solid #232838; border-radius:10px; padding:16px 18px; margin-bottom:16px; }}
+  .head {{ display:flex; align-items:center; gap:12px; margin-bottom:6px; flex-wrap:wrap; }}
+  .badge {{ color:#fff; font-size:11px; font-weight:600; padding:2px 9px; border-radius:20px; text-transform:uppercase; letter-spacing:.04em; }}
+  .label {{ font-weight:600; }} .meta {{ color:#9aa0aa; font-size:13px; margin-left:auto; }}
+  .title {{ color:#c8cdd6; font-size:14px; margin:2px 0; }}
+  .src {{ color:#5b9bd5; font-size:12px; text-decoration:none; word-break:break-all; }}
+  pre {{ background:#0c0e13; border:1px solid #1d2230; border-radius:8px; padding:12px; margin-top:10px;
+        max-height:280px; overflow:auto; white-space:pre-wrap; word-break:break-word; font-size:12.5px; color:#cdd3dc; }}
+</style></head><body>
+  <h1>Decision-maker dossier — {_html.escape(TARGET)}</h1>
+  <div class="sub">pith assembled this from {len(results)} live public sources across 4 fetch tiers. No API keys. Public data only.</div>
+  <div class="stats">
+    <div class="stat"><b>{ok}/{len(results)}</b><span>sources with content</span></div>
+    <div class="stat"><b>{total_chars:,}</b><span>chars of signal</span></div>
+    <div class="stat"><b>{total_ms/1000:.1f}s</b><span>wall-clock (workers={workers})</span></div>
+    <div class="stat"><b>4</b><span>tiers: browser · cheap · impersonation · document</span></div>
+  </div>
+  {''.join(cards)}
+</body></html>"""
 
 
 if __name__ == "__main__":

@@ -146,6 +146,11 @@ def _looks_thin(markdown: Optional[str]) -> bool:
 # not the real page — worth one more attempt. Genuinely small pages just stay small.
 _WALL_RETRY_THRESHOLD = 1000
 
+# Each stealth-browser fetch spins up a Camoufox instance (hundreds of MB). The cheap
+# tiers (HTTP/impersonation) are light and scale wide, but browser fetches must stay
+# bounded or a big list OOMs the box. ponytail: 3 is safe on 16GB; bump if you have RAM.
+_BROWSER_MAX_CONCURRENCY = 3
+
 
 def _extract_md(html: str) -> str:
     """HTML -> markdown (links + metadata kept). Empty string if nothing extractable."""
@@ -191,18 +196,54 @@ class Extractor:
         objective: Optional[str] = None,
         full_content: bool = False,
         render_js: object = "auto",  # "auto" | True | False
+        concurrency: int = 1,       # >1 enables tier-aware parallel fetching
     ) -> ExtractResult:
+        """Extract clean markdown for each URL. Results preserve input order; a single
+        failed URL lands in `.errors`, never sinks the batch.
+
+        concurrency > 1 fetches in parallel — the list-enrichment fast path. Cheap-tier
+        URLs (normal sites: HTTP/impersonation) run at full `concurrency`; browser-tier
+        URLs (walled gardens) are capped at _BROWSER_MAX_CONCURRENCY since each spins up a
+        RAM-heavy stealth browser. Most enrichment lists are company websites = cheap tier,
+        so the speedup is large in practice."""
+        if concurrency <= 1:
+            return self._reassemble(urls, {u: self._extract_one(u, objective, full_content, render_js) for u in urls})
+
+        from concurrent.futures import ThreadPoolExecutor
+        forces_browser = render_js is True
+        browser = [u for u in urls if forces_browser or _needs_browser(u)]
+        cheap = [u for u in urls if not (forces_browser or _needs_browser(u))]
+        done: dict = {}
+
+        def work(url):
+            return url, self._extract_one(url, objective, full_content, render_js)
+
+        for group, workers in ((cheap, concurrency),
+                               (browser, min(concurrency, _BROWSER_MAX_CONCURRENCY))):
+            if not group:
+                continue
+            with ThreadPoolExecutor(max_workers=workers) as pool:
+                done.update(dict(pool.map(work, group)))
+        return self._reassemble(urls, done)
+
+    def _extract_one(self, url, objective, full_content, render_js):
+        """One URL -> Result, or an error dict. The unit of work for the batch loop."""
+        try:
+            meta, body = self._to_markdown(url, render_js)
+            r = Result(url=url, title=meta.get("title"), publish_date=meta.get("date"))
+            if full_content:
+                r.full_content = body
+            r.excerpts = self._excerpts(body, objective) if objective else [body]
+            return r
+        except Exception as e:  # one bad URL shouldn't sink the batch
+            return {"url": url, "error": str(e)}
+
+    @staticmethod
+    def _reassemble(urls, done: dict) -> ExtractResult:
         out = ExtractResult()
         for url in urls:
-            try:
-                meta, body = self._to_markdown(url, render_js)
-                r = Result(url=url, title=meta.get("title"), publish_date=meta.get("date"))
-                if full_content:
-                    r.full_content = body
-                r.excerpts = self._excerpts(body, objective) if objective else [body]
-                out.results.append(r)
-            except Exception as e:  # one bad URL shouldn't sink the batch
-                out.errors.append({"url": url, "error": str(e)})
+            r = done[url]
+            (out.results if isinstance(r, Result) else out.errors).append(r)
         return out
 
     def _to_markdown(self, url: str, render_js: object) -> tuple[dict, str]:
