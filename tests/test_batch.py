@@ -1,8 +1,28 @@
 """Offline tests for the list/batch feature — no network."""
 import json
 
-from pith.cli import read_targets, run_batch, render, _section_links
+from pith.cli import read_targets, run_batch, render, _section_links, score_relevance, gate
 from pith.core import Result, ExtractResult
+
+
+def test_score_relevance_counts_query_tokens():
+    q = "buyer signals Matt MacInnis Rippling"
+    # signal page mentions person+company; competitor mentions neither
+    assert score_relevance(q, "https://x.com/Rippling", "Matt MacInnis CPO Rippling") > \
+           score_relevance(q, "https://crunchbase.com/organization/deel", "Deel global payroll")
+    # short tokens ignored (the/of), case-insensitive
+    assert score_relevance("the OF Rippling", "https://rippling.com", "") == 1
+
+
+def test_gate_keeps_top_budget_by_relevance():
+    q = "Matt MacInnis Rippling"
+    targets = [("a", "https://other.com/x"), ("b", "https://x.com/Rippling"),
+               ("c", "https://crunchbase.com/organization/rippling")]
+    snippets = {"https://x.com/Rippling": "Matt MacInnis Rippling",
+                "https://crunchbase.com/organization/rippling": "Rippling profile"}
+    kept = gate(targets, q, budget=2, snippets=snippets)
+    assert [u for _, u in kept] == ["https://x.com/Rippling", "https://crunchbase.com/organization/rippling"]
+    assert len(gate(targets, q)) == 3  # no budget = rank all
 
 
 def test_section_links_filters_dedups_bounds():

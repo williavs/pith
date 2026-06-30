@@ -55,6 +55,26 @@ _SECTIONS = ("about", "contact", "team", "leadership", "people", "our-team",
              "company", "management", "founders", "staff", "careers", "jobs")
 
 
+def score_relevance(query: str, url: str, snippet: str = "") -> int:
+    """Buyer-signal relevance of a candidate, pre-fetch: how many query tokens appear in the
+    URL + its search/anchor snippet. The gate's job is identity matching (is this about THIS
+    target), which is lexical — and this beat a 270MB semantic embedder 1.00 vs 0.83 on the
+    labeled dossier set (benchmarks/2026-06-30-gate-scorer.md). Generic, deterministic, no
+    hardcoded priors, no model. Feed a snippet when you have one — that's where the lift is."""
+    toks = {t for t in re.split(r"[^a-z0-9]+", query.lower()) if len(t) > 2}
+    hay = (url + " " + snippet).lower()
+    return sum(t in hay for t in toks)
+
+
+def gate(targets, query: str, budget: int | None = None, snippets: dict | None = None):
+    """Spend the fetch budget on the highest-signal candidates: rank (label,url) targets by
+    score_relevance desc, keep the top `budget`. Stable for ties (preserves input order)."""
+    snippets = snippets or {}
+    ranked = sorted(targets, key=lambda t: score_relevance(query, t[1], snippets.get(t[1], "")),
+                    reverse=True)
+    return ranked[:budget] if budget else ranked
+
+
 def _section_links(seed: str, html: str, sections, limit: int) -> list[tuple[str | None, str]]:
     """Pure: from a homepage's HTML, keep same-domain links whose path hits a section.
     Seed first, then matches in document order, deduped, capped. (Tested offline.)"""
