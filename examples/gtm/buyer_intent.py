@@ -32,11 +32,13 @@ async def intent_evidence(company: str, website: str, qualifier: str | None = No
     from pith.news import news_search
 
     ex = Extractor()
+    from pith.cli import _registrable
+    dom = _registrable(website)
     # STAGE 3 (news search) + tech + leadership, concurrently
     news, intel, contact = await asyncio.gather(
-        asyncio.to_thread(news_search, company, qualifier, 45),   # keyless buyer-intent news (was Tavily)
-        asyncio.to_thread(website_intel, website),                # tech posture (SSPM-relevant)
-        asyncio.to_thread(contact_evidence, website),             # leadership / new-hire signal
+        asyncio.to_thread(news_search, company, dom, qualifier, 45),  # keyless multi-source news (was Tavily)
+        asyncio.to_thread(website_intel, website),                    # tech posture (SSPM-relevant)
+        asyncio.to_thread(contact_evidence, website),                 # leadership / new-hire signal
     )
     # STAGE 4: extract the articles pith CAN fetch (the extractable/Bing ones) for the LLM analyzer
     extract_urls = [n["url"] for n in news if n["extractable"] and n["url"]][:8]

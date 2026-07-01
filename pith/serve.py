@@ -118,7 +118,7 @@ def _phone(body):
 
 def _news(body):
     from .news import news_search
-    items = news_search(_str(body, "company"), qualifier=body.get("qualifier"),
+    items = news_search(_str(body, "company"), domain=body.get("domain"), qualifier=body.get("qualifier"),
                         window_days=_int(body, "window_days", 90, lo=1, hi=365))
     return {"count": len(items), "items": items}
 
