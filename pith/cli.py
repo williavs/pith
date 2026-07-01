@@ -286,6 +286,102 @@ def _business_urls(results, limit):
     return urls
 
 
+def _parse_yp(html: str, limit: int) -> list[dict]:
+    """Parse YellowPages search results -> business records (name, phone, address, website)."""
+    import html as _h
+    out = []
+    for card in re.split(r'<div class="info">', html or "")[1:]:  # 1 card per business
+        name = re.search(r'class="business-name"[^>]*>([^<]+)', card)
+        if not name:
+            continue
+        phone = re.search(r'class="phone[s]?[^"]*"[^>]*>([^<]{7,20})', card)
+        adr = re.search(r'class="adr"[^>]*>([^<]+)', card)
+        if not adr:
+            st = re.search(r'class="street-address"[^>]*>([^<]+)', card)
+            lo = re.search(r'class="locality"[^>]*>([^<]+)', card)
+            addr = f"{st.group(1)} {lo.group(1)}" if st and lo else ""
+        else:
+            addr = adr.group(1)
+        site = re.search(r'href="(https?://(?!www\.yellowpages\.com)[^"]+)"[^>]*>\s*Website', card)
+        out.append({
+            "name": _h.unescape(name.group(1).strip()),
+            "phone": phone.group(1).strip() if phone else "",
+            "address": _h.unescape(addr.strip()),
+            "website": site.group(1) if site else "",
+        })
+        if len(out) >= limit:
+            break
+    return out
+
+
+def _fetch_directory_page(url: str) -> str:
+    from .core import _fetch_impersonate, _fetch_static, _fetch_js
+    for fetch in (_fetch_impersonate, _fetch_static, _fetch_js):  # YP rate-limits plain HTTP
+        try:
+            html = fetch(url)
+            if 'class="business-name"' in html:
+                return html
+        except Exception:
+            continue
+    return ""
+
+
+def directory_search(category: str, location: str, limit: int = 30) -> list[dict]:
+    """Category+geo -> a structured business list (name/phone/address/website), paginated,
+    from YellowPages AND SuperPages (both Thryv, same markup). Two sources fill each other's
+    gaps and cover for rate-limiting; results deduped by name + phone digits. Walks pages
+    until `limit` reached, so you can pull hundreds of local businesses per category+geo."""
+    from urllib.parse import quote_plus
+    ct, loc = quote_plus(category), quote_plus(location)
+    sources = [
+        f"https://www.yellowpages.com/search?search_terms={ct}&geo_location_terms={loc}",
+        f"https://www.superpages.com/search?search_terms={ct}&geo_location_terms={loc}",
+    ]
+    rows, seen = [], set()
+    for base in sources:
+        page = 1
+        while len(rows) < limit and page <= 40:            # 40-page ceiling per source
+            html = _fetch_directory_page(base + f"&page={page}")
+            if not html:
+                break
+            new = 0
+            for r in _parse_yp(html, 10 ** 6):
+                k = (r["name"].lower(), re.sub(r"\D", "", r["phone"]))  # dedup by name + phone digits
+                if not r["name"] or k in seen:
+                    continue
+                seen.add(k)
+                rows.append(r)
+                new += 1
+                if len(rows) >= limit:
+                    break
+            if new == 0:                                    # end of listings for this source
+                break
+            print(f"[directory] {base.split('//')[1].split('.')[1]} page {page}: {len(rows)} total",
+                  file=sys.stderr, flush=True)
+            page += 1
+        if len(rows) >= limit:
+            break
+    return rows[:limit]
+
+
+def render_directory(rows, fmt):
+    if fmt == "json":
+        return json.dumps(rows, indent=2)
+    if fmt == "csv":
+        import csv as _csv
+        import io
+        buf = io.StringIO()
+        w = _csv.DictWriter(buf, fieldnames=["name", "phone", "website", "address"], extrasaction="ignore")
+        w.writeheader()
+        w.writerows(rows)
+        return buf.getvalue().rstrip()
+    out = [f"{'business':32} {'phone':16} website"]
+    for r in rows:
+        out.append(f"{r['name'][:32]:32} {r['phone']:16} {r['website'][:40] or '(none)'}")
+    out.append(f"\n{len(rows)} businesses · {sum(1 for r in rows if r['website'])} with a website")
+    return "\n".join(out)
+
+
 def searx_urls(query, limit=10):
     """Search a SearXNG instance -> business homepage URLs. Instance from $PITH_SEARX_URL."""
     import os
@@ -523,6 +619,8 @@ def main() -> None:
     ap.add_argument("--crawl", metavar="URL", help="batch: from a homepage, follow links into about/contact/team/... sections")
     ap.add_argument("--match", metavar="SUBSTR", help="with --sitemap: keep only URLs containing this substring")
     ap.add_argument("--limit", type=int, default=25, help="cap pages gathered by --sitemap/--crawl (default 25)")
+    ap.add_argument("--directory", metavar="CATEGORY", help="GTM: build a business list from YellowPages (use with --geo, e.g. --directory plumber --geo 'Columbus, OH')")
+    ap.add_argument("--geo", metavar="LOCATION", help="with --directory: city, state (e.g. 'Columbus, OH')")
     ap.add_argument("--prospect", metavar="QUERY", help="GTM: search a category+geo (needs $PITH_SEARX_URL) -> a lead list, each with dug owner contact")
     ap.add_argument("--intel", metavar="URL", help="GTM: website tech stack + modernness grade + domain age (find dated sites to sell services to)")
     ap.add_argument("--find", metavar="URL", help="GTM: dig a business's public owner contact (ranked emails, phones, socials, WHOIS)")
@@ -540,6 +638,13 @@ def main() -> None:
         _enable_trace()
     render_js = True if args.js else "auto"
     ex = Extractor()
+
+    if args.directory:  # GTM: YellowPages category+geo -> business list
+        if not args.geo:
+            ap.error("--directory needs --geo (e.g. --geo 'Columbus, OH')")
+        rows = directory_search(args.directory, args.geo, limit=args.limit)
+        print(render_directory(rows, "table" if args.format == "md" else args.format))
+        return
 
     if args.prospect:  # GTM: search a category+geo -> lead list with owner contact
         leads = prospect(args.prospect, limit=args.limit, workers=args.workers)
