@@ -13,7 +13,8 @@ pip install 'pith[osint]'   # phone intelligence (phonenumbers)
 
 | Example | What it teaches | Run |
 |---|---|---|
-| **build_sales_list.py** | The GTM top-of-funnel: `directory_search` → `website_intel` (A–F grade) → `find_contact` (owner email/phone). Outputs a ranked JSON lead list. | `python examples/build_sales_list.py "plumbers" "Tulsa, OK" 8` |
+| **build_sales_list.py** | Build a list from a market: `directory_search` → `website_intel` (A–F grade) → `find_contact` (owner email/phone). Ranked JSON. | `python examples/build_sales_list.py "plumbers" "Tulsa, OK" 8` |
+| **enrich_list.py** | Enrich a list you already hold: `enrich_company` → firmographics, company-matched emails, socials, tech grade. CSV/JSON. | `python examples/enrich_list.py stripe.com https://linear.app` |
 | **scout/** | The same pipeline as a live browser console with SSE observability (a full demo app). | `python examples/scout/server.py` → localhost:8848 |
 
 ## OSINT / people research
