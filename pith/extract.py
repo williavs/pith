@@ -420,50 +420,38 @@ def enrich(markdown: str, html: str, source_url: str = "") -> dict:
     from .evidence import Source, aggregate
     src = (markdown or "") + "\n" + (html or "")
     st = structured(html)
-    tel = set(phones(html))
-    for e in st:  # fold schema.org telephones — through phones() so they canonicalize + dedup
-        t = e.get("telephone")
-        if isinstance(t, (str, int)):          # skip malformed dict/list telephone values
-            tel |= set(phones(str(t)))
-    # emails: visible/entity + Cloudflare + bracketed at/dot + any in schema.org
-    em = set(emails(src)) | set(cfemails(html)) | set(atdot_emails(src))
-    for e in st:
-        v = e.get("email")
-        if isinstance(v, str):                 # skip non-string schema email values
-            em |= set(emails(v))
-    em = {e for e in em if not _junk_email(e)}
-    soc = socials(src)
-    adr = addresses(html)
 
-    # provenance: one observation per (value, extraction method) at this url; aggregate() unions
-    def _src(method):
+    # ONE extraction pass -> provenance observations -> facts. The legacy lists are derived
+    # from facts, so there's a single source of truth (no double extraction).
+    def _s(method):
         return Source(source_url, method)
     obs = []
-    obs += [(e, "email", _src("text"), _email_label(e)) for e in emails(src) if not _junk_email(e)]
-    obs += [(e, "email", _src("cfemail"), _email_label(e)) for e in cfemails(html) if not _junk_email(e)]
-    obs += [(e, "email", _src("atdot"), _email_label(e)) for e in atdot_emails(src) if not _junk_email(e)]
-    for e in st:
+    obs += [(e, "email", _s("text"), _email_label(e)) for e in emails(src) if not _junk_email(e)]
+    obs += [(e, "email", _s("cfemail"), _email_label(e)) for e in cfemails(html) if not _junk_email(e)]
+    obs += [(e, "email", _s("atdot"), _email_label(e)) for e in atdot_emails(src) if not _junk_email(e)]
+    obs += [(p, "phone", _s("text"), {}) for p in phones(html)]
+    obs += [(s, "social", _s("text"), {}) for s in socials(src)]
+    obs += [(a, "address", _s("schema.org"), {}) for a in addresses(html)]
+    for e in st:                               # schema.org is authoritative: emails, tel, own sameAs
         v = e.get("email")
         if isinstance(v, str):
-            obs += [(x, "email", _src("schema.org"), _email_label(x)) for x in emails(v) if not _junk_email(x)]
-    obs += [(p, "phone", _src("text"), {}) for p in phones(html)]
-    for e in st:
+            obs += [(x, "email", _s("schema.org"), _email_label(x)) for x in emails(v) if not _junk_email(x)]
         t = e.get("telephone")
         if isinstance(t, (str, int)):
-            obs += [(p, "phone", _src("schema.org"), {}) for p in phones(str(t))]
-    obs += [(s, "social", _src("text"), {}) for s in soc]
-    for e in st:                               # schema.org sameAs are the subject's OWN links (authoritative)
+            obs += [(p, "phone", _s("schema.org"), {}) for p in phones(str(t))]
         sa = e.get("sameAs")
         if sa:
-            obs += [(str(u), "social", _src("schema.org"), {}) for u in (sa if isinstance(sa, list) else [sa]) if _is_profile(str(u))]
-    obs += [(a, "address", _src("schema.org"), {}) for a in adr]
+            obs += [(str(u), "social", _s("schema.org"), {}) for u in (sa if isinstance(sa, list) else [sa]) if _is_profile(str(u))]
+    facts = aggregate(obs)
 
+    def _vals(kind):
+        return sorted({f.value for f in facts if f.kind == kind})
     return {
-        "emails": sorted(em),
-        "phones": sorted(tel),
-        "socials": soc,
-        "addresses": adr,
+        "emails": _vals("email"),
+        "phones": _vals("phone"),
+        "socials": _vals("social"),
+        "addresses": _vals("address"),
         "structured": st,
         "meta": meta(html),
-        "facts": aggregate(obs),               # evidence model: value + sources(url,method) + corroboration
+        "facts": facts,                        # evidence model: value + sources(url,method) + corroboration
     }

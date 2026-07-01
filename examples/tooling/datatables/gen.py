@@ -69,7 +69,7 @@ urls = ["https://example.com", "https://www.python.org", "https://news.ycombinat
 rows = []
 out = Extractor().extract(urls, concurrency=4)
 for r in out.results:
-    body = r.full_content or (r.excerpts[0] if r.excerpts else "")
+    body = r.markdown
     rows.append([r.url, (r.title or "")[:38], len(r.emails), len(r.phones), len(r.socials),
                  len(r.structured), len(body)])
 for e in out.errors:

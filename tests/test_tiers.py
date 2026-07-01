@@ -53,7 +53,7 @@ def test_run_batch_caps_browser_concurrency(monkeypatch):
     class _Ex:
         def extract(self, urls, **kw):
             from pith.core import ExtractResult, Result
-            return ExtractResult(results=[Result(url=urls[0], excerpts=["x"])])
+            return ExtractResult(results=[Result(url=urls[0], markdown="x")])
 
     def fake_pool(max_workers):
         seen["workers"] = max_workers
@@ -61,12 +61,12 @@ def test_run_batch_caps_browser_concurrency(monkeypatch):
     monkeypatch.setattr(cli, "ThreadPoolExecutor", fake_pool)
 
     walled = [("a", "https://reddit.com/r/x"), ("b", "https://example.com")]
-    cli.run_batch(_Ex(), walled, full=False, render_js="auto", workers=16)
+    cli.run_batch(_Ex(), walled, render_js="auto", workers=16)
     assert seen["workers"] == cli._BROWSER_MAX_CONCURRENCY   # capped from 16
 
     seen.clear()
     cheap = [("a", "https://example.com"), ("b", "https://foo.com")]
-    cli.run_batch(_Ex(), cheap, full=False, render_js="auto", workers=16)
+    cli.run_batch(_Ex(), cheap, render_js="auto", workers=16)
     assert seen["workers"] == 16                             # no wall -> uncapped
 
 

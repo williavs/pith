@@ -1,6 +1,6 @@
 """pith CLI.
 
-Single URL:   pith <url> [--full] [--js]
+Single URL:   pith <url> [--js]
 A list:       pith --from companies.csv [--format md|json|table] [--workers N]
 
 The list file is one target per line: a bare URL, or a label+URL pair (csv, either
@@ -606,7 +606,7 @@ def read_targets(path: str) -> list[tuple[str | None, str]]:
     return targets
 
 
-def run_batch(ex, targets, *, full, render_js, workers, verbose=False):
+def run_batch(ex, targets, *, render_js, workers, verbose=False):
     """Drive the extractor over targets, one extract() per URL so we can show progress
     and parallelize. Returns (label, url, Result | error-dict) rows in input order."""
     total = len(targets)
@@ -623,7 +623,7 @@ def run_batch(ex, targets, *, full, render_js, workers, verbose=False):
             log.info("fetch_start", extra={"i": i, "n": total, "url": url, "label": label})
         else:
             print(f"[{i}/{total}] {label or url}", file=sys.stderr, flush=True)
-        out = ex.extract(urls=[url], full_content=full, render_js=render_js)
+        out = ex.extract(urls=[url], render_js=render_js)
         return (label, url, out.results[0] if out.results else out.errors[0])
 
     items = list(enumerate(targets, 1))
@@ -653,8 +653,7 @@ def render(rows, fmt: str) -> str:
         out = [f"{'STATUS':<7} {'BYTES':>7}  TARGET"]
         for l, u, r in rows:
             if isinstance(r, Result):
-                n = len(r.full_content or (r.excerpts[0] if r.excerpts else ""))
-                out.append(f"{'ok':<7} {n:>7}  {l or u}")
+                out.append(f"{'ok':<7} {len(r.markdown):>7}  {l or u}")
             else:
                 out.append(f"{'ERROR':<7} {'-':>7}  {l or u}: {str(r.get('error'))[:50]}")
         out.append(f"\n{len(ok)} ok, {len(err)} errors")
@@ -669,7 +668,7 @@ def render(rows, fmt: str) -> str:
         if r.publish_date:
             out.append(f"_{r.publish_date}_")
         out.append("")
-        out.extend(r.excerpts)
+        out.append(r.markdown)
         out.append("")
     for l, u, r in err:
         out.append(f"## {l or u}\n[error] {r.get('error')}\n")
@@ -703,7 +702,6 @@ def main() -> None:
     ap.add_argument("--budget", type=int, help="with --about: fetch only the top-N most relevant candidates (skip the rest — saves the 4-5s/page walled-fetch cost)")
     ap.add_argument("--format", choices=["md", "json", "table", "csv"], default="md", help="output format (csv/json for --enrich; default md)")
     ap.add_argument("--workers", type=int, default=1, help="batch: parallel fetches (default 1)")
-    ap.add_argument("--full", action="store_true", help="include full page markdown")
     ap.add_argument("--js", action="store_true", help="force a real browser (JS-rendered / bot-protected pages)")
     ap.add_argument("--verbose", "-v", action="store_true", help="stream a structured NDJSON trace of every pipeline step (tiers, timing, concurrency, network) to stderr")
     args = ap.parse_args()
@@ -773,22 +771,20 @@ def main() -> None:
             if not args.verbose:
                 print(f"gate: ranked {n} candidates by '{args.about}'"
                       + (f", fetching top {args.budget}" if args.budget else ""), file=sys.stderr)
-        rows = run_batch(ex, targets, full=args.full,
-                         render_js=render_js, workers=args.workers, verbose=args.verbose)
+        rows = run_batch(ex, targets, render_js=render_js, workers=args.workers, verbose=args.verbose)
         print(render(rows, args.format))
         return
 
     if not args.url:
         ap.error("provide a URL, or --from FILE for a list")
 
-    out = ex.extract(urls=[args.url], full_content=args.full, render_js=render_js)
+    out = ex.extract(urls=[args.url], render_js=render_js)
     for r in out.results:
         if r.title:
             print(f"# {r.title}")
         if r.publish_date:
             print(f"_{r.publish_date}_\n")
-        for e in r.excerpts:
-            print(e)
+        print(r.markdown)
     for err in out.errors:
         print(f"[error] {err['url']}: {err['error']}")
 

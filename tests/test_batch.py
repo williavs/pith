@@ -235,12 +235,12 @@ class _FakeExtractor:
         url = urls[0]
         if "bad" in url:
             return ExtractResult(errors=[{"url": url, "error": "no extractable content"}])
-        return ExtractResult(results=[Result(url=url, title="T", excerpts=["body text here"])])
+        return ExtractResult(results=[Result(url=url, title="T", markdown="body text here")])
 
 
 def _rows():
     targets = [("Good", "https://good.com"), ("Bad", "https://bad.com")]
-    return run_batch(_FakeExtractor(), targets, full=False, render_js="auto", workers=1)
+    return run_batch(_FakeExtractor(), targets, render_js="auto", workers=1)
 
 
 def test_run_batch_maps_results_and_errors():
@@ -271,6 +271,6 @@ def test_render_markdown_has_labels():
 
 def test_run_batch_parallel_matches_sequential():
     targets = [("A", "https://a.com"), ("B", "https://b.com"), ("C", "https://c.com")]
-    seq = run_batch(_FakeExtractor(), targets, full=False, render_js="auto", workers=1)
-    par = run_batch(_FakeExtractor(), targets, full=False, render_js="auto", workers=3)
+    seq = run_batch(_FakeExtractor(), targets, render_js="auto", workers=1)
+    par = run_batch(_FakeExtractor(), targets, render_js="auto", workers=3)
     assert [l for l, u, r in seq] == [l for l, u, r in par]  # order preserved

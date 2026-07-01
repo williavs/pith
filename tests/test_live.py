@@ -49,7 +49,7 @@ def ex():
 def test_source_yields_content(ex, name, url, min_bytes, needles):
     out = ex.extract(urls=[url])
     assert not out.errors, f"{name}: {out.errors}"
-    md = out.results[0].excerpts[0].lower()
+    md = out.results[0].markdown.lower()
     assert len(md) >= min_bytes, f"{name}: only {len(md)}B (wall?)"
     assert any(n in md for n in needles), f"{name}: none of {needles} found"
 
@@ -60,6 +60,6 @@ def test_partial_source_yields_some_content(ex, name, url, min_bytes):
     """Partials must return *some* public content and must NOT be a pure login wall."""
     out = ex.extract(urls=[url])
     assert not out.errors, f"{name}: {out.errors}"
-    md = out.results[0].excerpts[0].lower()
+    md = out.results[0].markdown.lower()
     assert len(md) >= min_bytes, f"{name}: only {len(md)}B"
     assert not any(p in md for p in WALL_PHRASES), f"{name}: looks like a login wall"

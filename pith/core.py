@@ -6,7 +6,7 @@ A drop-in for the Parallel Extract API: same call shape, same result fields, $0.
     out = ex.extract(urls=["https://..."])
     for r in out.results:
         print(r.title, r.publish_date, r.emails, r.socials)
-        print(r.excerpts[0])   # clean markdown
+        print(r.markdown)      # clean markdown
 """
 from __future__ import annotations
 
@@ -33,8 +33,7 @@ class Result:
     url: str
     title: Optional[str] = None
     publish_date: Optional[str] = None
-    excerpts: list[str] = field(default_factory=list)  # [clean markdown] (kept for Parallel API shape)
-    full_content: Optional[str] = None                 # full page markdown, if full_content=True
+    markdown: str = ""                                 # clean extracted markdown of the page
     # deterministic structured data, auto-extracted from the page (no LLM) — the developer
     # gets these for free on every result:
     emails: list[str] = field(default_factory=list)
@@ -269,7 +268,6 @@ class Extractor:
     def extract(
         self,
         urls: list[str],
-        full_content: bool = False,
         render_js: object = "auto",  # "auto" | True | False
         concurrency: int = 1,       # >1 enables tier-aware parallel fetching
     ) -> ExtractResult:
@@ -282,7 +280,7 @@ class Extractor:
         RAM-heavy stealth browser. Most enrichment lists are company websites = cheap tier,
         so the speedup is large in practice."""
         if concurrency <= 1:
-            return self._reassemble(urls, {u: self._extract_one(u, full_content, render_js) for u in urls})
+            return self._reassemble(urls, {u: self._extract_one(u, render_js) for u in urls})
 
         from concurrent.futures import ThreadPoolExecutor
         forces_browser = render_js is True
@@ -291,7 +289,7 @@ class Extractor:
         done: dict = {}
 
         def work(url):
-            return url, self._extract_one(url, full_content, render_js)
+            return url, self._extract_one(url, render_js)
 
         for group, workers in ((cheap, concurrency),
                                (browser, min(concurrency, _BROWSER_MAX_CONCURRENCY))):
@@ -301,15 +299,13 @@ class Extractor:
                 done.update(dict(pool.map(work, group)))
         return self._reassemble(urls, done)
 
-    def _extract_one(self, url, full_content, render_js):
+    def _extract_one(self, url, render_js):
         """One URL -> Result, or an error dict. The unit of work for the batch loop."""
         t = perf_counter()
         try:
             meta, body, html = self._to_markdown(url, render_js)
             r = Result(url=url, title=meta.get("title"), publish_date=meta.get("date"))
-            if full_content:
-                r.full_content = body
-            r.excerpts = [body]
+            r.markdown = body
             det = _enrich(body, html, source_url=url)  # deterministic structured data — no LLM
             r.emails, r.phones, r.socials = det["emails"], det["phones"], det["socials"]
             r.addresses = det.get("addresses", [])

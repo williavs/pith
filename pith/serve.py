@@ -68,8 +68,7 @@ def _extract(body):
         raise BadRequest("no valid URL strings in 'urls'")
     if len(urls) > MAX_URLS:
         raise BadRequest(f"too many urls: {len(urls)} (max {MAX_URLS} per request)")
-    out = Extractor().extract(urls, full_content=bool(body.get("full_content")),
-                              render_js=body.get("js", "auto"),
+    out = Extractor().extract(urls, render_js=body.get("js", "auto"),
                               concurrency=_int(body, "concurrency", min(8, len(urls))))
     return {"results": [asdict(r) for r in out.results], "errors": [str(e) for e in out.errors]}
 
