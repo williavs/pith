@@ -1,6 +1,6 @@
 """pith CLI.
 
-Single URL:   pith <url> [objective] [--full] [--js]
+Single URL:   pith <url> [--full] [--js]
 A list:       pith --from companies.csv [--format md|json|table] [--workers N]
 
 The list file is one target per line: a bare URL, or a label+URL pair (csv, either
@@ -223,7 +223,7 @@ def read_targets(path: str) -> list[tuple[str | None, str]]:
     return targets
 
 
-def run_batch(ex, targets, *, objective, full, render_js, workers, verbose=False):
+def run_batch(ex, targets, *, full, render_js, workers, verbose=False):
     """Drive the extractor over targets, one extract() per URL so we can show progress
     and parallelize. Returns (label, url, Result | error-dict) rows in input order."""
     total = len(targets)
@@ -240,7 +240,7 @@ def run_batch(ex, targets, *, objective, full, render_js, workers, verbose=False
             log.info("fetch_start", extra={"i": i, "n": total, "url": url, "label": label})
         else:
             print(f"[{i}/{total}] {label or url}", file=sys.stderr, flush=True)
-        out = ex.extract(urls=[url], objective=objective, full_content=full, render_js=render_js)
+        out = ex.extract(urls=[url], full_content=full, render_js=render_js)
         return (label, url, out.results[0] if out.results else out.errors[0])
 
     items = list(enumerate(targets, 1))
@@ -297,7 +297,6 @@ def render(rows, fmt: str) -> str:
 def main() -> None:
     ap = argparse.ArgumentParser(prog="pith", description="URL -> clean LLM-ready markdown (free).")
     ap.add_argument("url", nargs="?", help="a single URL (omit when using --from)")
-    ap.add_argument("objective", nargs="?", help="optional: return only passages answering this (needs GROQ_API_KEY)")
     ap.add_argument("--from", dest="from_file", metavar="FILE", help="batch: read URLs from a list file (txt or csv)")
     ap.add_argument("--sitemap", metavar="URL", help="batch: crawl a sitemap.xml and gather every page (filter with --match)")
     ap.add_argument("--crawl", metavar="URL", help="batch: from a homepage, follow links into about/contact/team/... sections")
@@ -342,7 +341,7 @@ def main() -> None:
             if not args.verbose:
                 print(f"gate: ranked {n} candidates by '{args.about}'"
                       + (f", fetching top {args.budget}" if args.budget else ""), file=sys.stderr)
-        rows = run_batch(ex, targets, objective=args.objective, full=args.full,
+        rows = run_batch(ex, targets, full=args.full,
                          render_js=render_js, workers=args.workers, verbose=args.verbose)
         print(render(rows, args.format))
         return
@@ -350,7 +349,7 @@ def main() -> None:
     if not args.url:
         ap.error("provide a URL, or --from FILE for a list")
 
-    out = ex.extract(urls=[args.url], objective=args.objective, full_content=args.full, render_js=render_js)
+    out = ex.extract(urls=[args.url], full_content=args.full, render_js=render_js)
     for r in out.results:
         if r.title:
             print(f"# {r.title}")

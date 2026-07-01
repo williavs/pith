@@ -1,19 +1,16 @@
-"""pith — turn any public URL into clean, LLM-ready markdown. Free.
+"""pith — turn any public URL into clean, LLM-ready markdown. Free, no LLM inside.
 
 A drop-in for the Parallel Extract API: same call shape, same result fields, $0.
     from pith import Extractor
     ex = Extractor()
-    out = ex.extract(urls=["https://..."], objective="when was it founded?")
+    out = ex.extract(urls=["https://..."])
     for r in out.results:
-        print(r.title, r.publish_date)
-        for e in r.excerpts:
-            print(e)
+        print(r.title, r.publish_date, r.emails, r.socials)
+        print(r.excerpts[0])   # clean markdown
 """
 from __future__ import annotations
 
-import json
 import logging
-import os
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass, field
@@ -36,7 +33,7 @@ class Result:
     url: str
     title: Optional[str] = None
     publish_date: Optional[str] = None
-    excerpts: list[str] = field(default_factory=list)  # markdown passages (objective-focused, or full content)
+    excerpts: list[str] = field(default_factory=list)  # [clean markdown] (kept for Parallel API shape)
     full_content: Optional[str] = None                 # full page markdown, if full_content=True
     # deterministic structured data, auto-extracted from the page (no LLM) — the developer
     # gets these for free on every result:
@@ -198,24 +195,12 @@ def _split_frontmatter(md: str) -> tuple[dict, str]:
 # --- the client ---
 
 class Extractor:
-    """Free Extract client. No API key needed for markdown; an LLM key (Groq, free)
-    is only used when you pass an `objective` to get focused excerpts."""
-
-    def __init__(
-        self,
-        llm_api_key: Optional[str] = None,
-        llm_model: str = "llama-3.3-70b-versatile",
-        llm_base_url: str = "https://api.groq.com/openai/v1",
-    ):
-        # any OpenAI-compatible endpoint works; Groq's free tier is the default
-        self.llm_api_key = llm_api_key or os.environ.get("GROQ_API_KEY") or os.environ.get("OPENAI_API_KEY")
-        self.llm_model = llm_model
-        self.llm_base_url = llm_base_url.rstrip("/")
+    """Free Extract client. No API key, no LLM — clean markdown + deterministic structured
+    data (emails/socials/schema.org) out. The stealth browser and tier logic are hidden."""
 
     def extract(
         self,
         urls: list[str],
-        objective: Optional[str] = None,
         full_content: bool = False,
         render_js: object = "auto",  # "auto" | True | False
         concurrency: int = 1,       # >1 enables tier-aware parallel fetching
@@ -229,7 +214,7 @@ class Extractor:
         RAM-heavy stealth browser. Most enrichment lists are company websites = cheap tier,
         so the speedup is large in practice."""
         if concurrency <= 1:
-            return self._reassemble(urls, {u: self._extract_one(u, objective, full_content, render_js) for u in urls})
+            return self._reassemble(urls, {u: self._extract_one(u, full_content, render_js) for u in urls})
 
         from concurrent.futures import ThreadPoolExecutor
         forces_browser = render_js is True
@@ -238,7 +223,7 @@ class Extractor:
         done: dict = {}
 
         def work(url):
-            return url, self._extract_one(url, objective, full_content, render_js)
+            return url, self._extract_one(url, full_content, render_js)
 
         for group, workers in ((cheap, concurrency),
                                (browser, min(concurrency, _BROWSER_MAX_CONCURRENCY))):
@@ -248,7 +233,7 @@ class Extractor:
                 done.update(dict(pool.map(work, group)))
         return self._reassemble(urls, done)
 
-    def _extract_one(self, url, objective, full_content, render_js):
+    def _extract_one(self, url, full_content, render_js):
         """One URL -> Result, or an error dict. The unit of work for the batch loop."""
         t = perf_counter()
         try:
@@ -256,7 +241,7 @@ class Extractor:
             r = Result(url=url, title=meta.get("title"), publish_date=meta.get("date"))
             if full_content:
                 r.full_content = body
-            r.excerpts = self._excerpts(body, objective) if objective else [body]
+            r.excerpts = [body]
             det = _enrich(body, html)  # deterministic structured data — no LLM
             r.emails, r.phones, r.socials = det["emails"], det["phones"], det["socials"]
             r.structured, r.meta = det["structured"], det["meta"]
@@ -345,22 +330,3 @@ class Extractor:
             if len(md) > len(best):
                 best, best_html = md, html
         return best, best_html
-
-    def _excerpts(self, markdown: str, objective: str) -> list[str]:
-        """One LLM call: return the passages that answer the objective."""
-        if not self.llm_api_key:
-            # no key — the clean markdown is still the product; hand it back whole
-            return [markdown]
-        body = json.dumps({
-            "model": self.llm_model,
-            "messages": [
-                {"role": "system", "content": "Return only the verbatim passages from the document that answer the objective, as a short markdown list. No preamble, no commentary."},
-                {"role": "user", "content": f"Objective: {objective}\n\nDocument:\n{markdown[:14000]}"},
-            ],
-        }).encode()
-        req = urllib.request.Request(
-            f"{self.llm_base_url}/chat/completions", data=body,
-            headers={"Authorization": f"Bearer {self.llm_api_key}", "Content-Type": "application/json"},
-        )
-        resp = json.load(urllib.request.urlopen(req, timeout=60))
-        return [resp["choices"][0]["message"]["content"]]

@@ -61,12 +61,12 @@ def test_run_batch_caps_browser_concurrency(monkeypatch):
     monkeypatch.setattr(cli, "ThreadPoolExecutor", fake_pool)
 
     walled = [("a", "https://reddit.com/r/x"), ("b", "https://example.com")]
-    cli.run_batch(_Ex(), walled, objective=None, full=False, render_js="auto", workers=16)
+    cli.run_batch(_Ex(), walled, full=False, render_js="auto", workers=16)
     assert seen["workers"] == cli._BROWSER_MAX_CONCURRENCY   # capped from 16
 
     seen.clear()
     cheap = [("a", "https://example.com"), ("b", "https://foo.com")]
-    cli.run_batch(_Ex(), cheap, objective=None, full=False, render_js="auto", workers=16)
+    cli.run_batch(_Ex(), cheap, full=False, render_js="auto", workers=16)
     assert seen["workers"] == 16                             # no wall -> uncapped
 
 

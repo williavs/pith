@@ -30,27 +30,25 @@ Python 3.10+ (developed and tested on 3.13).
 ```python
 from pith import Extractor
 
-ex = Extractor()  # no API key needed for markdown
+ex = Extractor()  # no API key, no LLM
 
-out = ex.extract(
-    urls=["https://www.crunchbase.com/organization/stripe"],
-    objective="latest funding round",   # optional → focused excerpts (one free LLM call)
-)
+out = ex.extract(urls=["https://www.crunchbase.com/organization/stripe"], concurrency=8)
 for r in out.results:
     print(r.title, r.publish_date)
-    for excerpt in r.excerpts:
-        print(excerpt)
+    print(r.excerpts[0])          # clean markdown
+    print(r.emails, r.socials)    # deterministic structured data — no LLM
+    print(r.structured)           # schema.org Person/Organization entities
 ```
 
-`extract()` params: `urls`, `objective` (None), `full_content` (False), `render_js`
-(`"auto"` | `True` | `False`). Result fields, same as Parallel: `r.url`, `r.title`,
-`r.publish_date`, `r.excerpts` (list), `r.full_content`.
+`extract()` params: `urls`, `full_content` (False), `render_js` (`"auto"` | `True` |
+`False`), `concurrency` (1). Result fields: `r.url`, `r.title`, `r.publish_date`,
+`r.excerpts` (list), `r.full_content`, plus auto-extracted `r.emails`, `r.phones`,
+`r.socials`, `r.structured`, `r.meta`.
 
 ## Use — CLI
 
 ```sh
 pith "https://example.com/article"
-pith "https://example.com/article" "what is the refund policy?"   # objective → excerpts
 
 # a list of URLs (one per line, bare URL or `label,url`; # and blanks skipped)
 pith --from companies.csv                 # markdown, per-label sections (default)
@@ -111,9 +109,10 @@ once automatically, but a hard wall on both attempts returns thin/partial conten
    go through **MarkItDown** instead of trafilatura.
 2. **Clean markdown** — `trafilatura` strips boilerplate (nav, ads, language switchers) and
    emits markdown with links preserved.
-3. **Excerpts (optional)** — one call to any OpenAI-compatible model (Groq free tier by
-   default) returns the passages that answer your `objective`. Also cleans up social-page noise
-   (sign-in modals, etc.) down to the data you want.
+3. **Structured data (deterministic, no LLM)** — emails, phones, socials, schema.org
+   Person/Organization (JSON-LD), and OpenGraph meta are pulled off the page and returned on
+   every result (`r.emails`, `r.socials`, `r.structured`, …). Any semantic step is the
+   consuming app's job — pith ships no LLM.
 
 Why a browser at all: Reddit/LinkedIn/Instagram/X block plain HTTP at the TLS-fingerprint /
 "network security" layer — `requests`, `curl`, browser-TLS-impersonation (`curl_cffi`), and
@@ -129,7 +128,6 @@ tricks floating around are dead as of mid-2026.)
 | `[js]` | `scrapling[fetchers]` → patchright/playwright + a stealth browser; `curl_cffi` for the impersonation tier | `scrapling install` downloads a browser (~hundreds of MB). Heavy, but it's what beats the walls. |
 | `[docs]` | `markitdown[all]` | PDF/Word/PowerPoint/Excel/epub/images → markdown |
 | `[pdf]` | `pymupdf` | lighter than `[docs]` if PDFs are all you need |
-| excerpts | none extra | needs an OpenAI-compatible API key (`GROQ_API_KEY`, free) — markdown works without it |
 
 ## Limits & responsible use
 
