@@ -13,8 +13,8 @@ the CRM.
 Input: a file with one company per line, `Name,https://website` (name optional — bare
 domains work too), or pass companies as args.
 
-Run:  python examples/enrich_list.py companies.txt
-      python examples/enrich_list.py stripe.com https://linear.app "Acme, acme.com"
+Run:  python examples/gtm/enrich_list.py companies.txt
+      python examples/gtm/enrich_list.py stripe.com https://linear.app "Acme, acme.com"
 """
 import csv
 import io
@@ -23,7 +23,7 @@ import sys
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from pith.cli import enrich_company
 
 

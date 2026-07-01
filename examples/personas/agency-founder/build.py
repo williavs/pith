@@ -2,7 +2,8 @@
 
   directory_search(cat, loc)  -> real local businesses
   website_intel(url)          -> modernness grade + dated_signals (the pitch hook)
-  find_contact(url)           -> owner email / phone / socials
+  contact_evidence(url)       -> Facts: emails / phones / socials (corroborated, typed)
+  recipes.owner_email/rank_phones -> the reach decision, made with agency intent
 
 Keeps only DATED sites (grade C/D/F), ranks the dated ones by how reachable the
 owner is, writes the top 5 to opportunities.json next to this file.
@@ -10,7 +11,8 @@ owner is, writes the top 5 to opportunities.json next to this file.
 Run:  .venv/bin/python examples/personas/agency-founder/build.py
 """
 import json, os, sys, time
-from pith.cli import directory_search, website_intel, find_contact
+from pith.cli import directory_search, website_intel, contact_evidence
+from pith import recipes
 
 OUT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "opportunities.json")
 loc = "Wichita, KS"
@@ -51,11 +53,17 @@ print(f"\ndated C/D/F: {len(dated)}", file=sys.stderr)
 rows = []
 for b, intel in dated:
     t = time.time()
-    contact = find_contact(b["website"])
-    owner_email = next((e["email"] for e in contact["emails"] if e.get("type") in ("owner", "person")), None)
-    reach = (2 if owner_email else 1 if contact["emails"] else 0) + (1 if contact["phones"] else 0) + (1 if contact["socials"] else 0)
-    print(f"contact {b['name'][:28]:28} {len(contact['emails'])} mail "
-          f"{len(contact['phones'])} phone socials={len(contact['socials'])} reach={reach} "
+    ev = contact_evidence(b["website"])
+    facts = ev["facts"]
+    emails = [f.value for f in facts if f.kind == "email"]
+    phones = [f.value for f in recipes.rank_phones(facts)]
+    socials = [f.value for f in facts if f.kind == "social"]
+    best = recipes.owner_email(facts, prefer=("owner", "person", "role"))
+    owner_email = best.value if best else None
+    reach = (2 if owner_email else 1 if emails else 0) + (1 if phones else 0) + (1 if socials else 0)
+    contact = {"emails": emails, "phones": phones, "socials": socials}
+    print(f"contact {b['name'][:28]:28} {len(emails)} mail "
+          f"{len(phones)} phone socials={len(socials)} reach={reach} "
           f"[{round(time.time()-t,1)}s]", file=sys.stderr)
     rows.append((reach, b, intel, contact, owner_email))
 
@@ -77,8 +85,8 @@ for reach, b, intel, contact, owner_email in rows[:5]:
         "domain_age_years": intel.get("domain_age_years"),
         "dated_signals": intel.get("dated_signals"),
         "owner_email": owner_email,
-        "emails": [e["email"] for e in contact["emails"]],
-        "phones": [p["number"] for p in contact["phones"]],
+        "emails": contact["emails"],
+        "phones": contact["phones"],
         "socials": contact["socials"],
     })
 

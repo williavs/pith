@@ -14,15 +14,15 @@ Every step is deterministic and public-only — no auth, no breach data, no scra
 login. This is the pattern to copy for a real investigation: start from what you know, let
 each result feed the next lookup, and keep the provenance.
 
-Run:  python examples/investigate.py [email]
-      python examples/investigate.py beau@dentedreality.com.au    # a real public Gravatar
+Run:  python examples/osint/investigate.py [email]
+      python examples/osint/investigate.py beau@dentedreality.com.au    # a real public Gravatar
 
 Requires:  pip install 'pith[osint]'   (phonenumbers)
 """
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from pith import verify_email
 from pith.gravatar import gravatar_profile
 from pith.phoneintel import phone_intel

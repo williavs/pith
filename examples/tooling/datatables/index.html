@@ -1,0 +1,60 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1"><title>pith — data tables</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600;9..144,900&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+ :root{--paper:#faf8f4;--ink:#211c16;--dim:#8a8074;--line:#e4ddcf;--ox:#8b2b2b;--warn:#9a6a1a;--panel:#f2ede3}
+ *{box-sizing:border-box}body{margin:0;background:var(--paper);color:var(--ink);font-family:"JetBrains Mono",monospace;font-size:12.5px}
+ header{padding:22px 30px;border-bottom:2px solid var(--ink)}
+ header h1{margin:0;font-family:"Fraunces",serif;font-weight:900;font-size:32px}
+ header h1 .d{color:var(--ox)} header .s{color:var(--dim);font-family:"Fraunces",serif;font-style:italic}
+ .wrap{padding:14px 30px 60px}
+ section{margin:26px 0}
+ h2{font-family:"Fraunces",serif;font-weight:600;font-size:20px;margin:0 0 2px;border-left:3px solid var(--ox);padding-left:10px}
+ .note{color:var(--dim);margin:0 0 10px;padding-left:13px;font-size:12px}
+ table{border-collapse:collapse;width:100%;background:#fff;border:1px solid var(--line)}
+ th,td{text-align:left;padding:6px 10px;border-bottom:1px solid var(--line);vertical-align:top;word-break:break-word}
+ th{background:var(--panel);color:var(--dim);text-transform:uppercase;letter-spacing:1px;font-size:10px;cursor:pointer;user-select:none;position:sticky;top:0}
+ th:hover{color:var(--ox)} tr:hover td{background:#fbf8f2}
+ td.b-true{color:#4d6b45;font-weight:700} td.b-false{color:var(--dim)} td.err{color:var(--ox);font-weight:700}
+ td.empty{color:var(--warn)} .count{color:var(--dim);font-weight:400;font-size:13px;font-family:"JetBrains Mono"}
+</style></head><body>
+<header><h1>pith<span class="d">.</span> data tables</h1><span class="s">the actual output — normal and edge cases</span></header>
+<div class="wrap" id="wrap"></div>
+<script>
+const TABLES=[{"title": "verify_email", "note": "email classification \u2014 watch the IDN/unicode, malformed, and whitespace rows", "columns": ["input", "valid_syntax", "domain", "is_role", "is_freemail", "is_disposable", "has_alias"], "rows": [["owner@joesplumbing.com", true, "joesplumbing.com", false, false, false, false], ["info@acme.com", true, "acme.com", true, false, false, false], ["jane.doe@gmail.com", true, "gmail.com", false, true, false, false], ["sales@company.co", true, "company.co", true, false, false, false], ["test@mailinator.com", true, "mailinator.com", false, false, true, false], ["a+newsletter@corp.io", true, "corp.io", false, false, false, true], ["jos\u00e9@example.com", true, "example.com", false, false, false, false], ["\u7528\u6237@\u4f8b\u5b50.\u516c\u53f8", true, "\u4f8b\u5b50.\u516c\u53f8", false, false, false, false], ["notanemail", false, null, null, null, null, null], ["x@sub.domain.co.uk", true, "sub.domain.co.uk", false, false, false, false], ["CEO@Startup.IO", true, "startup.io", false, false, false, false], ["  spaced@x.com  ", true, "x.com", false, false, false, false], ["a@b", false, null, null, null, null, null]]}, {"title": "extract.phones()", "note": "what pith pulls as phone numbers from raw text \u2014 false positives / dropped intl = data-quality faults", "columns": ["input text", "phones() output"], "rows": [["Call us at (614) 837-3280 today", "[\"(614) 837-3280\"]"], ["Order #12345678901234 shipped", "[]"], ["ISBN 978-3-16-148410-0", "[]"], ["Resolution 1920 x 1080 pixels", "[]"], ["Call 1-800-FLOWERS now", "[]"], ["UK office +44 20 7946 0958", "[\"+442079460958\"]"], ["India +91 98765 43210", "[\"+919876543210\"]"], ["Fake (555) 555-5555 placeholder", "[]"], ["Text 415.555.1234 or 415-555-1234", "[\"(415) 555-1234\"]"], ["Card 4111 1111 1111 1111", "[]"], ["Meeting 2024 12 25 09 00", "[]"]]}, {"title": "extract.emails()", "note": "false-positive bait for email extraction", "columns": ["input text", "emails() output"], "rows": [["Reach jane@acme.com or bob@acme.com", "[\"bob@acme.com\", \"jane@acme.com\"]"], ["Logo at logo@2x.png in assets", "[]"], ["Runtime react@18.2.0 installed", "[]"], ["Cron @reboot runs the job", "[]"], ["Follow @company on twitter", "[]"], ["Price 5.00@night per room", "[]"], ["email hidden: name [at] domain [dot] com", "[]"]]}, {"title": "extract.socials()", "note": "should keep real profile URLs, drop share/intent links", "columns": ["input html", "socials() output"], "rows": [["<a href=\"https://facebook.com/JoesPlumbing\">fb</a>", "[\"https://facebook.com/JoesPlumbing\"]"], ["<a href=\"https://facebook.com/sharer.php?u=x\">share<", "[]"], ["<a href=\"https://twitter.com/intent/tweet\">tweet</a>", "[]"], ["<a href=\"https://www.linkedin.com/company/acme\">li</", "[\"https://www.linkedin.com/company/acme\"]"], ["<a href=\"https://instagram.com/joes.plumbing\">ig</a>", "[\"https://instagram.com/joes.plumbing\"]"]]}, {"title": "Extractor.extract (live)", "note": "real page extraction \u2014 structured-data counts + content length; note the .invalid failure row", "columns": ["url", "title", "emails", "phones", "socials", "structured", "chars"], "rows": [["https://example.com", "Example Domain", 0, 0, 0, 0, 113], ["https://www.python.org", "Welcome to Python.org", 0, 0, 3, 0, 2792], ["https://news.ycombinator.com", "Hacker News", 1, 0, 3, 0, 3806], ["https://httpbin.org/html", "Herman Melville - Moby-Dick", 0, 0, 0, 0, 3566], ["{'url': 'https://this-domain-does-not-exist-pi", "ERROR", "", "", "", "", ""]]}, {"title": "website_intel (live)", "note": "tech-stack + modernness grade", "columns": ["domain", "grade", "score", "builder", "responsive", "https", "age_yrs"], "rows": [["example.com", "A", 100, "unknown", true, true, 31], ["python.org", "B", 78, "unknown", true, true, 31], ["wordpress.org", "A", 100, "WordPress", true, true, 23]]}, {"title": "directory_search (live)", "note": "YellowPages + SuperPages business list, deduped", "columns": ["name", "phone", "website", "address"], "rows": [["Acme Plumbing & Heating Co", "(918) 986-7691", "http://www.plumbingtulsa.org/", "1111 E Archer St, Tulsa, OK 74120"], ["Southeast Plumbing Inc", "(918) 947-9783", "http://www.southeastplumbing.net/", "12915 E Pine St, Tulsa, OK 74116"], ["AndPro Plumbing", "(918) 443-4208", "https://www.andproplumbing.com/", "505 E Patti Page Blvd, Claremore, OK 7"], ["A A Electric & Plumbing Inc", "(918) 582-6288", "https://www.aaelectricandplumbing.com/", "823 S Wheeling Ave, Tulsa, OK 74104"], ["Shoemaker Mechanical", "(918) 585-1239", "http://www.shoemakerac.com/", "1623 N 71st East Ave, Tulsa, OK 74115"], ["Southeast Plumbing Inc", "(918) 236-0598", "https://www.southeastplumbing.net/", "12915 E Pine St, Tulsa, OK 74116"], ["Vickrey Heat and Air Inc.", "(918) 923-0159", "https://vickreyheatandair.com/", "22405 S 4190 Rd, Claremore, OK 74019"], ["Acme Plumbing & Heating Co", "(918) 543-9101", "https://acmeplumbingheating.com/", "1111 E Archer St, Tulsa, OK 74120"]]}, {"title": "enumerate_profiles (live)", "note": "OSINT profile enumeration for handle 'torvalds' \u2014 EXISTENCE only, not identity-verified (collisions possible)", "columns": ["site", "kind", "value", "url"], "rows": [["GitHub", "firmographic", "high", "https://www.github.com/torvalds"], ["HackerNews", "psychographic", "high", "https://news.ycombinator.com/user?id=torvalds"], ["Medium", "psychographic", "high", "https://medium.com/@torvalds"], ["Codeberg", "firmographic", "med", "https://codeberg.org/torvalds"], ["Codeforces", "firmographic", "med", "https://codeforces.com/profile/torvalds"], ["Kaggle", "firmographic", "med", "https://www.kaggle.com/torvalds"]]}, {"title": "gravatar (live) \u2014 email\u2192accounts", "note": "the best legal email\u2192accounts pivot: a public Gravatar hands back linked profiles", "columns": ["email", "name", "location", "profile_url", "linked_accounts"], "rows": [["beau@dentedreality.com.au", "Beau Lebens", "Golden, CO", "https://gravatar.com/beau", "X, LinkedIn, GitHub, Instagram"], ["nobody-xyz-notreal@example.com", "NO PUBLIC PROFILE", "", "", ""]]}, {"title": "phone_intel (offline)", "note": "region \u00b7 line-type (mobile/landline/toll-free) \u00b7 E.164 on any number \u2014 no lookups, no cost", "columns": ["input", "valid", "region", "line_type", "location", "e164"], "rows": [["+44 20 7946 0958", true, "GB", "fixed_line", "London", "+442079460958"], ["(212) 867-5309", true, "US", "fixed_or_mobile", "New York, NY", "+12128675309"], ["+91 98765 43210", true, "IN", "mobile", "India", "+919876543210"], ["+1 800 555 0100", true, "US", "toll_free", "", "+18005550100"], ["+61 2 9374 4000", true, "AU", "fixed_line", "Australia", "+61293744000"], ["notaphone", false, null, null, "", ""]]}];
+const wrap=document.getElementById('wrap');
+function cell(v){
+  const td=document.createElement('td');
+  if(v===true){td.textContent='true';td.className='b-true';}
+  else if(v===false){td.textContent='false';td.className='b-false';}
+  else if(v===null||v===''||v==='[]'){td.textContent=(v==='[]'?'[]':'—');td.className='empty';}
+  else if(v==='ERROR'||v==='EXCEPTION'||v==='ERR'){td.textContent=v;td.className='err';}
+  else td.textContent=String(v);
+  return td;
+}
+TABLES.forEach(t=>{
+  const sec=document.createElement('section');
+  const h=document.createElement('h2');h.textContent=t.title;
+  h.innerHTML+=` <span class="count">· ${t.rows.length} rows</span>`;
+  const p=document.createElement('p');p.className='note';p.textContent=t.note;
+  const tbl=document.createElement('table');
+  const thead=document.createElement('thead');const htr=document.createElement('tr');
+  t.columns.forEach((c,ci)=>{const th=document.createElement('th');th.textContent=c;
+    th.onclick=()=>sortBy(tbl,ci);htr.appendChild(th);});
+  thead.appendChild(htr);tbl.appendChild(thead);
+  const tb=document.createElement('tbody');
+  t.rows.forEach(r=>{const tr=document.createElement('tr');r.forEach(v=>tr.appendChild(cell(v)));tb.appendChild(tr);});
+  tbl.appendChild(tb);
+  sec.append(h,p,tbl);wrap.appendChild(sec);
+});
+function sortBy(tbl,ci){
+  const tb=tbl.querySelector('tbody');const rows=[...tb.rows];
+  const asc=tbl.dataset.sc!=ci+'a';
+  rows.sort((a,b)=>{const x=a.cells[ci].textContent,y=b.cells[ci].textContent;
+    const nx=parseFloat(x),ny=parseFloat(y);
+    if(!isNaN(nx)&&!isNaN(ny))return asc?nx-ny:ny-nx;
+    return asc?x.localeCompare(y):y.localeCompare(x);});
+  tbl.dataset.sc=ci+(asc?'a':'d');rows.forEach(r=>tb.appendChild(r));
+}
+</script></body></html>

@@ -20,10 +20,11 @@ from pathlib import Path
 from urllib.parse import urlparse, parse_qs
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-from pith.cli import directory_search, find_contact, _registrable, _domain_age_years
+from pith.cli import directory_search, contact_evidence, _registrable, _domain_age_years
 from pith.core import _fetch_static
 from pith.techstack import analyze
 from pith.resolve import resolve_person, Target
+from pith import recipes
 
 HERE = Path(__file__).resolve().parent
 
@@ -50,8 +51,8 @@ BUNDLES = {
 
 _GRADE_RANK = {"F": 0, "D": 1, "C": 2, "B": 3, "A": 4, "?": 5}
 GRADE_WORKERS = 16          # flat curl_cffi fetches; stable to ~20. I/O-bound, absorbs slow-host tail
-DIG_WORKERS = 6             # find_contact nests its own Extractor pool — keep OUTER×INNER bounded (see _dig)
-DIG_INNER = 2               # Extractor concurrency inside each find_contact; 6×2=12 total native fetches (safe)
+DIG_WORKERS = 6             # contact_evidence nests its own Extractor pool — keep OUTER×INNER bounded (see _dig)
+DIG_INNER = 2               # Extractor concurrency inside each contact_evidence; 6×2=12 total native fetches (safe)
 PER_CAT = 18                # ~1 directory page/source per category — fast, still ~120 businesses across a bundle
 
 # per-category "platform play" for the MULTIPLY starter (HFL's real pitch: not a $2k site)
@@ -166,13 +167,33 @@ def _grade(b: dict):
     return b, intel
 
 
+def _owner_shape(ev: dict) -> dict:
+    """Collapse a pith contact_evidence result (Fact objects + Coverage) back into the flat
+    'owner' shape the frontend SSE contract expects. pith no longer picks a 'primary' — the
+    recipes apply Scout's judgment (owner-preferred email, corroboration-ranked phones)."""
+    facts = ev["facts"]
+    email_facts = [f for f in facts if f.kind == "email"]
+    phone_facts = recipes.rank_phones(facts)                          # ranked by corroboration
+    social_facts = [f for f in facts if f.kind == "social"]
+    name_facts = [f for f in facts if f.kind == "name"]
+    return {
+        "emails": [{"email": f.value, "type": f.labels.get("email_type")}
+                   for f in email_facts if f.labels.get("email_type")],
+        "phones": [{"number": f.value, "sources": f.corroboration} for f in phone_facts],
+        "socials": [f.value for f in social_facts],
+        "people": [{"name": f.value, "title": f.labels.get("title", "")} for f in name_facts],
+        "pages": len(ev["coverage"].ok),                              # crawled-OK page count (for the log line)
+    }
+
+
 def _dig(b: dict, intel: dict):
     """Worker-thread dig: owner contact + WHOIS domain-age together, so both run concurrently
     across the pool (NOT serialized in the SSE yield loop)."""
     try:
-        contact = find_contact(b["website"], workers=DIG_INNER)   # bound nested concurrency (native fetch libs)
+        ev = contact_evidence(b["website"], workers=DIG_INNER)   # bound nested concurrency (native fetch libs)
     except Exception:
         return None
+    contact = _owner_shape(ev)
     intel = {**intel, "domain_age_years": _domain_age_years(_registrable(b["website"]))}
     return b, intel, contact
 
@@ -361,7 +382,7 @@ def deep_events(website):
     """On-demand deep profile scan for one opportunity's owner: enumerate + cross-corroborate
     their public profiles -> where they're most active + confidence."""
     yield "log", {"msg": f"deep scan: {website}"}
-    contact = find_contact(website)
+    contact = _owner_shape(contact_evidence(website))
     domain = _registrable(website)
     handle = None
     for s in contact["socials"]:
