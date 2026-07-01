@@ -110,6 +110,16 @@ def test_resolve_freemail_not_company():
     assert "COMPANY-DOMAIN" not in score(Target(name="A B", website="https://gmail.com"), r)["signals"]
 
 
+def test_person_title_inferred_from_schema_parent():
+    from pith.extract import structured
+    # no jobTitle, but placed under founder -> title is Founder
+    h = '<script type="application/ld+json">{"@type":"Organization","name":"Acme","founder":{"@type":"Person","name":"Jane Doe"}}</script>'
+    assert [(e["name"], e.get("jobTitle")) for e in structured(h)] == [("Acme", None), ("Jane Doe", "Founder")]
+    # explicit jobTitle is not overwritten
+    h2 = '<script type="application/ld+json">{"@type":"Organization","name":"A","founder":{"@type":"Person","name":"Sam","jobTitle":"CEO"}}</script>'
+    assert ("Sam", "CEO") in [(e["name"], e.get("jobTitle")) for e in structured(h2)]
+
+
 def test_crawl_site_is_ssrf_guarded():
     # crawl_site (the first fetch of every contact_evidence run) must honor the guard.
     from pith.cli import crawl_site

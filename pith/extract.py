@@ -170,6 +170,10 @@ _DROP_PARENT = frozenset({"author", "creator", "reviewer", "commenter", "contrib
 _OWNER_PARENT = frozenset({"founder", "owner", "employee", "employees", "member", "members",
                            "contactpoint", "manager", "founders", "director",
                            "mainentity", "about"})
+# when a Person has no explicit jobTitle, the schema key they hang off IS their title —
+# founder/owner/director are real titles; employee/member are too generic to assert.
+_PARENT_TITLE = {"founder": "Founder", "founders": "Founder", "owner": "Owner",
+                 "manager": "Manager", "director": "Director"}
 # an Organization reached via one of these keys is a third party (site publisher, ad sponsor,
 # product brand, grant funder) — NOT the business the page is about. Drop it.
 _DROP_ORG_PARENT = frozenset({"publisher", "sponsor", "brand", "funder", "provider",
@@ -281,6 +285,8 @@ def structured(html: str) -> list[dict]:
             else:
                 continue
             kept = {k: e[k] for k in _KEEP if k in e}
+            if is_person and not kept.get("jobTitle") and pkey in _PARENT_TITLE:
+                kept["jobTitle"] = _PARENT_TITLE[pkey]   # schema placed them under founder/owner/... = their title
             key = json.dumps(kept, sort_keys=True, default=str)
             if kept.get("name") and key not in seen:
                 seen.add(key)
