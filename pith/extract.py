@@ -1,0 +1,133 @@
+"""Deterministic structured extraction — no LLM, no model, no network. Given a page's raw
+HTML (and its clean markdown), pull the fields a developer actually wants off a company /
+decision-maker page: emails, phone links, social profiles, and the schema.org / OpenGraph
+data the page already embeds for Google. Accuracy over recall — a wrong email is worse than
+a missing one, so every extractor filters hard.
+"""
+from __future__ import annotations
+
+import json
+import re
+
+_EMAIL = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,24}")
+# junk that matches the email shape but isn't a real contact: error trackers, placeholders,
+# asset filenames, framework noise.
+_EMAIL_JUNK = ("sentry.", "@sentry", "example.", "@example", "wixpress", "@2x", ".png", ".jpg",
+               ".gif", ".webp", "your@", "email@example", "name@", "user@", "@domain", "@email",
+               "@company", "test@test", "godaddy", "@sentry.io")
+
+# social PROFILE urls only — not share/intent/generic-nav links, not other people's buttons.
+_SOCIAL = re.compile(
+    r"https?://(?:[a-z0-9-]+\.)?"
+    r"(?:linkedin\.com/(?:in|company)/[A-Za-z0-9%_-]+"
+    r"|(?:twitter|x)\.com/[A-Za-z0-9_]{2,15}"
+    r"|github\.com/[A-Za-z0-9-]+"
+    r"|facebook\.com/[A-Za-z0-9.-]+"
+    r"|instagram\.com/[A-Za-z0-9._]+)",
+    re.I,
+)
+# handles/paths that are UI, not a person: share buttons, intents, nav, generic pages.
+_SOCIAL_JUNK = ("/share", "/intent", "/sharer", "/hashtag/", "/explore", "/home", "/login",
+                "/search", "/privacy", "/help", "/about", "/tos", "/policies")
+_SOCIAL_HANDLES = {"share", "intent", "home", "login", "search", "explore", "i", "messages",
+                   "notifications", "settings", "privacy", "help", "about", "tos", "sharer"}
+
+_TEL = re.compile(r"tel:(\+?[\d][\d\s().-]{5,})")  # explicit phone LINKS only — text regex is too noisy
+
+_JSON_LD = re.compile(r'<script[^>]*type=["\']application/ld\+json["\'][^>]*>(.*?)</script>', re.S | re.I)
+_ENTITY_TYPES = ("Person", "Organization", "Corporation", "LocalBusiness")
+_KEEP = ("@type", "name", "jobTitle", "email", "telephone", "url", "sameAs", "worksFor", "address", "description")
+
+_META = [("og:title", "title"), ("og:description", "description"), ("og:site_name", "site"),
+         ("og:type", "type"), ("article:author", "author"), ("article:published_time", "published"),
+         ("author", "author")]
+
+
+def emails(text: str) -> list[str]:
+    return sorted({e for e in _EMAIL.findall(text or "")
+                   if not any(j in e.lower() for j in _EMAIL_JUNK)})
+
+
+def phones(html: str) -> list[str]:
+    """Only `tel:` links — reliable. Free-text phone regex catches tracking IDs (measured)."""
+    return sorted({re.sub(r"\s+", " ", t).strip() for t in _TEL.findall(html or "")})
+
+
+def _is_profile(url: str) -> bool:
+    low = url.lower()
+    if any(j in low for j in _SOCIAL_JUNK):
+        return False
+    handle = url.rstrip("/").rsplit("/", 1)[-1].lower()
+    return handle not in _SOCIAL_HANDLES
+
+
+def socials(text: str) -> list[str]:
+    return sorted({m.group(0) for m in _SOCIAL.finditer(text or "") if _is_profile(m.group(0))})
+
+
+def _iter_entities(data):
+    """Walk JSON-LD: unwrap @graph, top-level arrays, and nested objects."""
+    stack = [data]
+    while stack:
+        o = stack.pop()
+        if isinstance(o, dict):
+            if "@graph" in o and isinstance(o["@graph"], list):
+                stack.extend(o["@graph"])
+            yield o
+            stack.extend(v for v in o.values() if isinstance(v, (dict, list)))
+        elif isinstance(o, list):
+            stack.extend(o)
+
+
+def structured(html: str) -> list[dict]:
+    """schema.org Person/Organization entities the page embeds for Google — the deterministic
+    gold for decision-maker/company data: name, jobTitle, email, telephone, sameAs (socials)."""
+    out, seen = [], set()
+    for block in _JSON_LD.findall(html or ""):
+        try:
+            data = json.loads(block.strip())
+        except (json.JSONDecodeError, ValueError):
+            continue
+        for e in _iter_entities(data):
+            if not isinstance(e, dict):
+                continue
+            t = e.get("@type")
+            types = t if isinstance(t, list) else [t]
+            if not any(x in _ENTITY_TYPES for x in types):
+                continue
+            kept = {k: e[k] for k in _KEEP if k in e}
+            key = json.dumps(kept, sort_keys=True, default=str)
+            if kept.get("name") and key not in seen:
+                seen.add(key)
+                out.append(kept)
+    return out
+
+
+def meta(html: str) -> dict:
+    """OpenGraph + author/date meta tags."""
+    m = {}
+    for prop, key in _META:
+        mt = re.search(
+            rf'<meta[^>]+(?:property|name)=["\']{re.escape(prop)}["\'][^>]+content=["\']([^"\']+)',
+            html or "", re.I)
+        if mt and key not in m:
+            m[key] = mt.group(1).strip()
+    return m
+
+
+def enrich(markdown: str, html: str) -> dict:
+    """Everything deterministic, in one call. markdown feeds contact scan (clean text);
+    html feeds structured/meta (needs the raw tags)."""
+    src = (markdown or "") + "\n" + (html or "")
+    st = structured(html)
+    tel = phones(html)
+    for e in st:  # fold schema.org telephones into phones
+        if e.get("telephone"):
+            tel.append(str(e["telephone"]))
+    return {
+        "emails": emails(src),
+        "phones": sorted(set(tel)),
+        "socials": socials(src),
+        "structured": st,
+        "meta": meta(html),
+    }

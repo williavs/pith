@@ -22,6 +22,8 @@ from typing import Optional
 
 import trafilatura
 
+from .extract import enrich as _enrich
+
 log = logging.getLogger("pith")  # silent unless the CLI --verbose installs a handler
 
 
@@ -36,6 +38,13 @@ class Result:
     publish_date: Optional[str] = None
     excerpts: list[str] = field(default_factory=list)  # markdown passages (objective-focused, or full content)
     full_content: Optional[str] = None                 # full page markdown, if full_content=True
+    # deterministic structured data, auto-extracted from the page (no LLM) — the developer
+    # gets these for free on every result:
+    emails: list[str] = field(default_factory=list)
+    phones: list[str] = field(default_factory=list)
+    socials: list[str] = field(default_factory=list)   # linkedin/x/github/... profile URLs
+    structured: list[dict] = field(default_factory=list)  # schema.org Person/Organization entities
+    meta: dict = field(default_factory=dict)           # OpenGraph + author/date
 
 
 @dataclass
@@ -243,12 +252,16 @@ class Extractor:
         """One URL -> Result, or an error dict. The unit of work for the batch loop."""
         t = perf_counter()
         try:
-            meta, body = self._to_markdown(url, render_js)
+            meta, body, html = self._to_markdown(url, render_js)
             r = Result(url=url, title=meta.get("title"), publish_date=meta.get("date"))
             if full_content:
                 r.full_content = body
             r.excerpts = self._excerpts(body, objective) if objective else [body]
-            log.info("url_done", extra={"url": url, "ms": _ms(t), "bytes": len(body), "ok": True})
+            det = _enrich(body, html)  # deterministic structured data — no LLM
+            r.emails, r.phones, r.socials = det["emails"], det["phones"], det["socials"]
+            r.structured, r.meta = det["structured"], det["meta"]
+            log.info("url_done", extra={"url": url, "ms": _ms(t), "bytes": len(body),
+                                        "emails": len(r.emails), "socials": len(r.socials), "ok": True})
             return r
         except Exception as e:  # one bad URL shouldn't sink the batch
             log.info("url_done", extra={"url": url, "ms": _ms(t), "ok": False, "err": str(e)[:120]})
@@ -262,17 +275,19 @@ class Extractor:
             (out.results if isinstance(r, Result) else out.errors).append(r)
         return out
 
-    def _to_markdown(self, url: str, render_js: object) -> tuple[dict, str]:
+    def _to_markdown(self, url: str, render_js: object) -> tuple[dict, str, str]:
+        """Returns (metadata, markdown body, raw HTML). Raw HTML is '' for documents; it
+        feeds deterministic structured extraction (schema.org, contacts)."""
         if _is_document(url):  # PDF/Office/epub -> MarkItDown, not trafilatura
             t = perf_counter()
             title, body = _fetch_document(url)
             log.debug("tier", extra={"url": url, "tier": "document", "ms": _ms(t), "bytes": len(body)})
             if not body:
                 raise RuntimeError("no extractable content")
-            return ({"title": title} if title else {}), body
+            return ({"title": title} if title else {}), body, ""
         use_browser = render_js is True or _needs_browser(url)  # reddit/linkedin force the browser
         if use_browser:
-            md = self._browser_markdown(url)
+            md, raw = self._browser_markdown(url)
         else:
             md, raw = self._cheap_markdown(url)  # plain HTTP, then TLS-impersonation if that 403s/thins
             # Escalate to the browser only when extraction was thin BUT the raw HTML was
@@ -280,23 +295,23 @@ class Extractor:
             # is just small; the browser can't add what isn't there, so skip the ~3s.
             # ponytail: raw-size proxy; a rare <3KB shell won't escalate. Upgrade = sniff for
             # a script-heavy near-empty body.
-            if render_js == "auto" and _looks_thin(md) and raw >= _JS_SHELL_MIN_HTML:
-                md = self._browser_markdown(url)
+            if render_js == "auto" and _looks_thin(md) and len(raw) >= _JS_SHELL_MIN_HTML:
+                md, raw = self._browser_markdown(url)
         if not md:
             raise RuntimeError("no extractable content")
-        return _split_frontmatter(md)
+        meta, body = _split_frontmatter(md)
+        return meta, body, raw
 
-    def _cheap_markdown(self, url: str) -> tuple[str, int]:
+    def _cheap_markdown(self, url: str) -> tuple[str, str]:
         """No-browser tiers: plain HTTP, then browser-TLS impersonation if that fails or
-        comes up thin. Both are fast (~hundreds of ms). Returns (best markdown, largest raw
-        HTML seen) — the raw size lets the caller tell a JS shell (big HTML, thin extract)
-        from a genuinely tiny page (small HTML). Impersonation rescues 403s (WSJ et al.)."""
-        md, raw = "", 0
+        comes up thin. Both are fast (~hundreds of ms). Returns (best markdown, its raw HTML)
+        — the raw HTML feeds structured extraction, and its size tells a JS shell (big HTML,
+        thin extract) from a genuinely tiny page. Impersonation rescues 403s (WSJ et al.)."""
+        md, raw = "", ""
         t = perf_counter()
         try:
             html = _fetch_static(url)
-            raw = len(html)
-            md = _extract_md(html)
+            md, raw = _extract_md(html), html
         except Exception as e:
             log.debug("tier_fail", extra={"url": url, "tier": "static", "err": str(e)[:80]})
         if not _looks_thin(md):
@@ -305,10 +320,11 @@ class Extractor:
         t = perf_counter()
         try:
             html = _fetch_impersonate(url)
-            raw = max(raw, len(html))
             imp = _extract_md(html)
             if len(imp) > len(md):
-                md = imp
+                md, raw = imp, html
+            elif not raw:
+                raw = html
             log.debug("tier", extra={"url": url, "tier": "impersonate", "ms": _ms(t), "bytes": len(md)})
         except Exception as e:
             log.debug("tier_fail", extra={"url": url, "tier": "impersonate", "err": str(e)[:80]})
@@ -317,17 +333,18 @@ class Extractor:
     def _browser_markdown(self, url: str, attempts: int = 2) -> str:
         """Render in the stealth browser, retrying when the result looks like a transient
         wall. Returns the best (largest) markdown seen; '' if every attempt was empty."""
-        best = ""
+        best, best_html = "", ""
         for i in range(attempts):
             t = perf_counter()
-            md = _extract_md(_fetch_js(url))
+            html = _fetch_js(url)
+            md = _extract_md(html)
             log.debug("tier", extra={"url": url, "tier": "browser", "attempt": i + 1,
                                      "ms": _ms(t), "bytes": len(md)})
             if len(md.strip()) >= _WALL_RETRY_THRESHOLD:
-                return md  # real content — done
+                return md, html  # real content — done
             if len(md) > len(best):
-                best = md
-        return best
+                best, best_html = md, html
+        return best, best_html
 
     def _excerpts(self, markdown: str, objective: str) -> list[str]:
         """One LLM call: return the passages that answer the objective."""

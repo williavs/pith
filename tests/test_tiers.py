@@ -34,15 +34,15 @@ def test_thin_escalates_only_when_raw_html_is_big(monkeypatch):
     calls = {"browser": 0}
     ex = Extractor()
     monkeypatch.setattr(Extractor, "_browser_markdown",
-                        lambda self, url, attempts=2: calls.__setitem__("browser", calls["browser"] + 1) or "BROWSERED")
+                        lambda self, url, attempts=2: (calls.__setitem__("browser", calls["browser"] + 1) or "BROWSERED", "<html>"))
 
-    monkeypatch.setattr(Extractor, "_cheap_markdown", lambda self, url: ("tiny", 559))   # small page
-    meta, body = ex._to_markdown("https://example.com", "auto")
-    assert body == "tiny" and calls["browser"] == 0                                       # did NOT escalate
+    monkeypatch.setattr(Extractor, "_cheap_markdown", lambda self, url: ("tiny", "x" * 559))   # small page
+    meta, body, html = ex._to_markdown("https://example.com", "auto")
+    assert body == "tiny" and calls["browser"] == 0                                            # did NOT escalate
 
-    monkeypatch.setattr(Extractor, "_cheap_markdown", lambda self, url: ("", 50000))       # JS shell
+    monkeypatch.setattr(Extractor, "_cheap_markdown", lambda self, url: ("", "x" * 50000))     # JS shell
     ex._to_markdown("https://spa.example", "auto")
-    assert calls["browser"] == 1                                                           # DID escalate
+    assert calls["browser"] == 1                                                               # DID escalate
 
 
 def test_run_batch_caps_browser_concurrency(monkeypatch):
@@ -88,7 +88,7 @@ def test_concurrent_extract_preserves_order_and_errors(monkeypatch):
     def fake(self, url, render_js):
         if "bad" in url:
             raise RuntimeError("boom")
-        return ({"title": "t"}, f"body {url}")
+        return ({"title": "t"}, f"body {url}", "")
 
     monkeypatch.setattr(Extractor, "_to_markdown", fake)
     ex = Extractor()
