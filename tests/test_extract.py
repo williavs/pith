@@ -49,8 +49,8 @@ def test_atdot_bracketed_only():
 
 def test_phone_normalizer_recovers_obfuscated():
     # nbsp, unicode hyphen (U+2011), fullwidth digits — all should still yield the phone
-    assert "415 555 2671" in phones("Call 415 555 2671")
-    assert "415-555-2671" in phones("Call 415‑555‑2671")
+    assert phones("Call 415 555 2671") == ["(415) 555-2671"]
+    assert phones("Call 415‑555‑2671") == ["(415) 555-2671"]  # U+2011 hyphens
 
 
 def test_structured_drops_review_author_keeps_owner():
@@ -91,17 +91,18 @@ def test_emails_drops_junk():
 
 # ---- phones: only explicit tel: links (free-text numbers are tracking-ID noise) ----
 
-def test_phones_keeps_tel_links():
-    html = '<a href="tel:+14155551234">call</a> <a href="tel:415-555-1234">or</a>'
-    got = phones(html)
-    assert "+14155551234" in got and "415-555-1234" in got
+def test_phones_canonicalize_and_dedup():
+    # same number, many formats -> ONE canonical (415) 555-1234; count/corroboration is the
+    # caller's job (waterfall), the extractor just normalizes format.
+    html = '<a href="tel:+14155551234">call</a> <a href="tel:415-555-1234">or</a> 415.555.1234'
+    assert phones(html) == ["(415) 555-1234"]
 
 
 def test_phones_keeps_formatted_text_numbers():
     # phones shown as plain text (no tel: link) — the common case trafilatura strips
     txt = "Call us at (614) 836-8188 or 937-776-4851, toll free +1 330.764.1011"
     got = phones(txt)
-    for p in ["(614) 836-8188", "937-776-4851"]:
+    for p in ["(614) 836-8188", "(937) 776-4851", "(330) 764-1011"]:  # canonicalized
         assert p in got, f"recall miss: {p} in {got}"
 
 

@@ -211,25 +211,37 @@ def find_contact(website: str, workers: int = 4) -> dict:
     except Exception:
         targets = [(None, website)]          # crawl failed → still try the homepage
     out = ex.extract([u for _, u in targets], concurrency=workers)
-    emails, phones, socials, people = set(), set(), set(), {}
+    from collections import Counter
+    from .extract import _canon_phone
+    emails, socials, people = set(), set(), {}
+    phone_sources = Counter()   # waterfall: a phone corroborated across sources is high-confidence
+    addresses = set()
     for r in out.results:
         emails |= set(r.emails)
-        phones |= set(r.phones)
         socials |= set(r.socials)
+        addresses |= set(r.addresses)
+        for p in set(r.phones):                 # per-page dedup, then count across pages
+            phone_sources[p] += 1
         for e in r.structured:  # schema.org Person -> a named contact with a title
             types = e.get("@type") if isinstance(e.get("@type"), list) else [e.get("@type")]
             name = e.get("name")
             if "Person" in types and name and name not in people:
                 people[name] = e.get("jobTitle", "")
     domain = _registrable(website)
+    whois = _whois_registrant(domain)
+    if whois.get("phone"):                       # WHOIS registrant phone is another source
+        phone_sources[_canon_phone(whois["phone"]) or whois["phone"].strip()] += 1
+    # rank phones by corroboration (sources) desc — but keep every number, even 1-source ones
+    phones_ranked = [{"number": n, "sources": c}
+                     for n, c in sorted(phone_sources.items(), key=lambda kv: (-kv[1], kv[0]))]
     classified = [(_email_type(e, domain), e) for e in emails]
     ranked = sorted(((t, e) for t, e in classified if t != "drop"),
                     key=lambda te: (_EMAIL_RANK.get(te[0], 9), te[1]))
     return {"website": website, "domain": domain, "pages": len(out.results),
             "people": [{"name": n, "title": t} for n, t in people.items()],
             "emails": [{"email": e, "type": t} for t, e in ranked],
-            "phones": sorted(phones), "socials": sorted(socials),
-            "whois": _whois_registrant(domain)}
+            "phones": phones_ranked, "addresses": sorted(addresses),
+            "socials": sorted(socials), "whois": whois}
 
 
 def render_contact(c: dict, fmt: str) -> str:
@@ -241,7 +253,11 @@ def render_contact(c: dict, fmt: str) -> str:
         out += [f"  {p['name']}" + (f" — {p['title']}" if p['title'] else "") for p in c["people"]]
     out.append("emails:")
     out += [f"  {e['email']:34} [{e['type']}]" for e in c["emails"]] or ["  (none found)"]
-    out.append(f"phones:  {', '.join(c['phones']) or '(none published)'}")
+    out.append("phones:")
+    out += [f"  {p['number']:18} ({p['sources']} source{'s' if p['sources'] > 1 else ''})"
+            for p in c["phones"]] or ["  (none published)"]
+    if c.get("addresses"):
+        out.append(f"address: {'; '.join(c['addresses'])}")
     out.append(f"socials: {', '.join(c['socials'][:6]) or '(none)'}")
     out.append(f"whois:   {c['whois'] or '(private / proxied)'}")
     return "\n".join(out)
@@ -295,7 +311,7 @@ def _best_contact(lead):
     if lead["emails"]:
         return lead["emails"][0]["email"], lead["emails"][0]["type"]
     if lead["phones"]:
-        return lead["phones"][0], "phone"
+        return lead["phones"][0]["number"], "phone"
     return "-", "-"
 
 
@@ -310,12 +326,14 @@ def render_leads(leads, fmt):
         w.writerow(["business", "best_contact", "contact_type", "phone", "socials"])
         for l in leads:
             best, typ = _best_contact(l)
-            w.writerow([l["domain"], best, typ, (l["phones"][0] if l["phones"] else ""), ";".join(l["socials"][:3])])
+            phone = l["phones"][0]["number"] if l["phones"] else ""
+            w.writerow([l["domain"], best, typ, phone, ";".join(l["socials"][:3])])
         return buf.getvalue().rstrip()
     out = [f"{'business':30} {'best contact':34} {'type':8} phone"]
     for l in leads:
         best, typ = _best_contact(l)
-        out.append(f"{l['domain'][:30]:30} {best[:34]:34} {typ:8} {l['phones'][0] if l['phones'] else '-'}")
+        phone = l["phones"][0]["number"] if l["phones"] else "-"
+        out.append(f"{l['domain'][:30]:30} {best[:34]:34} {typ:8} {phone}")
     out.append(f"\n{len(leads)} leads · {sum(1 for l in leads if l['emails'] or l['phones'])} with contact")
     return "\n".join(out)
 

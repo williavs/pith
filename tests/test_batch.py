@@ -32,7 +32,7 @@ def test_find_contact_ranks_owner_first_drops_junk(monkeypatch):
     types = [e["type"] for e in c["emails"]]
     assert types[0] == "owner"                         # gmail owner ranked first
     assert types == ["owner", "person", "role"]        # disposable dropped, right order
-    assert c["phones"] == ["+1-555-000-1111"]
+    assert c["phones"] == [{"number": "+1-555-000-1111", "sources": 1}]
 
 
 def test_find_contact_survives_crawl_failure(monkeypatch):
@@ -92,9 +92,9 @@ def test_searx_urls_requires_env(monkeypatch):
 def test_render_leads_csv_falls_back_to_phone():
     from pith.cli import render_leads
     leads = [
-        {"domain": "a.com", "emails": [{"email": "o@gmail.com", "type": "owner"}], "phones": ["555"], "socials": ["fb"]},
-        {"domain": "b.com", "emails": [], "phones": ["999"], "socials": []},   # no email -> phone
-        {"domain": "c.com", "emails": [], "phones": [], "socials": []},         # nothing
+        {"domain": "a.com", "emails": [{"email": "o@gmail.com", "type": "owner"}], "phones": [{"number": "555", "sources": 2}], "socials": ["fb"]},
+        {"domain": "b.com", "emails": [], "phones": [{"number": "999", "sources": 1}], "socials": []},  # no email -> phone
+        {"domain": "c.com", "emails": [], "phones": [], "socials": []},                                  # nothing
     ]
     out = render_leads(leads, "csv")
     assert "business,best_contact,contact_type" in out.splitlines()[0]
