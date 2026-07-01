@@ -160,16 +160,16 @@ def _company_emails(emails, website: str) -> list[str]:
 
 
 def enrich_company(name: str, website: str, workers: int = 4) -> dict:
-    """One pith pass over a company's key sections -> a GTM-ready row. All browser/tier/
-    concurrency machinery hidden; caller just gets structured, company-matched data."""
-    ex = Extractor()
-    targets = crawl_site(website, limit=6)
-    out = ex.extract([u for _, u in targets], concurrency=workers, render_js="auto")
-    socials, emails = set(), set()
-    for r in out.results:
-        socials |= set(r.socials)
-        emails |= set(r.emails)
-    urls = [r.url for r in out.results]
+    """A GTM-ready firmographic row, composed transparently from contact_evidence + recipes
+    (not an opaque wrapper): company-matched socials, on-domain emails (typed, so functional
+    mailboxes are visible), careers signal, and tech grade. The raw evidence is one call away
+    via contact_evidence(website)."""
+    ev = contact_evidence(website, workers=workers)
+    socials = {f.value for f in ev["facts"] if f.kind == "social"}
+    # company emails = on-domain, excluding role/functional if the caller wants people (here: keep all typed)
+    emails = [f.value for f in ev["facts"] if f.kind == "email"
+              and f.labels.get("email_type") in ("owner", "person", "role", "functional")]
+    urls = ev["coverage"].ok
     from .core import _fetch_static
     from .techstack import analyze
     try:                                         # tech/modernness column (one homepage fetch)
@@ -177,31 +177,15 @@ def enrich_company(name: str, website: str, workers: int = 4) -> dict:
     except Exception:
         a = {"modernness_grade": "?", "builder": "?", "hosted_builder": None}
     return {
-        "company": name, "website": website, "pages": len(out.results),
+        "company": name, "website": website, "pages": len(urls),
         "linkedin": _company_social(socials, name, "linkedin.com/company"),
         "github": _company_social(socials, name, "github.com"),
         "twitter": _company_social(socials, name, "twitter.com") or _company_social(socials, name, "x.com"),
-        "emails": _company_emails(emails, website),
+        "emails": sorted(emails),
         "careers": any("career" in u.lower() or "/job" in u.lower() for u in urls),
         "grade": a.get("modernness_grade"), "builder": a.get("builder"), "hosted": a.get("hosted_builder"),
     }
 
-
-# email value order for GTM: an owner-operator's freemail beats a named person on the
-# company domain beats a generic role mailbox. Disposable/invalid are dropped.
-_EMAIL_RANK = {"owner": 0, "person": 1, "role": 2, "other": 3}
-
-
-def _email_type(email: str, domain: str) -> str:
-    from .extract import verify_email
-    v = verify_email(email)
-    if not v["valid_syntax"] or v["is_disposable"]:
-        return "drop"
-    if v["is_freemail"]:
-        return "owner"                       # freemail on a business site = the owner-operator
-    if email.split("@")[-1].endswith(domain):
-        return "role" if v["is_role"] else "person"
-    return "other"
 
 
 def _whois_registrant(domain: str) -> dict:
@@ -269,6 +253,12 @@ def contact_evidence(website: str, workers: int = 4) -> dict:
                            for e in (out.errors or [])])
     # union every page's facts -> cross-page corroboration (distinct source URLs)
     obs = [(f.value, f.kind, s, f.labels) for r in out.results for f in r.facts for s in f.sources]
+    for r in out.results:                                 # schema.org Person -> a named contact
+        for e in r.structured:
+            types = e.get("@type") if isinstance(e.get("@type"), list) else [e.get("@type")]
+            if "Person" in types and e.get("name"):
+                obs.append((str(e["name"]), "name", Source(r.url, "schema.org"),
+                            {"title": e.get("jobTitle", "")}))
     # WHOIS registrant contact = another independent source
     whois = _whois_registrant(domain)
     if whois.get("email"):
@@ -284,64 +274,31 @@ def contact_evidence(website: str, workers: int = 4) -> dict:
     return {"domain": domain, "facts": facts, "coverage": cov, "whois": whois}
 
 
-def find_contact(website: str, workers: int = 4) -> dict:
-    """Dig a business's public owner contact: crawl its key sections, extract + rank emails
-    (owner freemail first), tel: phones, socials, and WHOIS registrant. All public data."""
-    ex = Extractor()
-    try:
-        targets = crawl_site(website, limit=8)
-    except Exception:
-        targets = [(None, website)]          # crawl failed → still try the homepage
-    out = ex.extract([u for _, u in targets], concurrency=workers)
-    from collections import Counter
-    from .extract import _canon_phone
-    emails, socials, people = set(), set(), {}
-    phone_sources = Counter()   # waterfall: a phone corroborated across sources is high-confidence
-    addresses = set()
-    for r in out.results:
-        emails |= set(r.emails)
-        socials |= set(r.socials)
-        addresses |= set(r.addresses)
-        for p in set(r.phones):                 # per-page dedup, then count across pages
-            phone_sources[p] += 1
-        for e in r.structured:  # schema.org Person -> a named contact with a title
-            types = e.get("@type") if isinstance(e.get("@type"), list) else [e.get("@type")]
-            name = e.get("name")
-            if "Person" in types and name and name not in people:
-                people[name] = e.get("jobTitle", "")
-    domain = _registrable(website)
-    whois = _whois_registrant(domain)
-    if whois.get("phone"):                       # WHOIS registrant phone is another source
-        phone_sources[_canon_phone(whois["phone"]) or whois["phone"].strip()] += 1
-    # rank phones by corroboration (sources) desc — but keep every number, even 1-source ones
-    phones_ranked = [{"number": n, "sources": c}
-                     for n, c in sorted(phone_sources.items(), key=lambda kv: (-kv[1], kv[0]))]
-    classified = [(_email_type(e, domain), e) for e in emails]
-    ranked = sorted(((t, e) for t, e in classified if t != "drop"),
-                    key=lambda te: (_EMAIL_RANK.get(te[0], 9), te[1]))
-    return {"website": website, "domain": domain, "pages": len(out.results),
-            "people": [{"name": n, "title": t} for n, t in people.items()],
-            "emails": [{"email": e, "type": t} for t, e in ranked],
-            "phones": phones_ranked, "addresses": sorted(addresses),
-            "socials": sorted(socials), "whois": whois}
+def _facts_of(evidence: dict, kind: str):
+    return [f for f in evidence["facts"] if f.kind == kind]
 
 
 def render_contact(c: dict, fmt: str) -> str:
+    """Render contact_evidence. Shows every fact with its corroboration + type + coverage —
+    no 'primary' pick (that's the caller's, via pith.recipes)."""
     if fmt == "json":
-        return json.dumps(c, indent=2)
-    out = [f"CONTACT: {c['domain']}  ({c['pages']} pages crawled)"]
-    if c.get("people"):
+        return json.dumps({"domain": c["domain"],
+                           "facts": [f.as_dict() for f in c["facts"]],
+                           "coverage": c["coverage"].as_dict(), "whois": c["whois"]}, indent=2)
+    cov = c["coverage"]
+    out = [f"CONTACT EVIDENCE: {c['domain']}  ({len(cov.ok)}/{len(cov.checked)} pages ok)"]
+    people = _facts_of(c, "name")
+    if people:
         out.append("people:")
-        out += [f"  {p['name']}" + (f" — {p['title']}" if p['title'] else "") for p in c["people"]]
+        out += [f"  {f.value}" + (f" — {f.labels['title']}" if f.labels.get("title") else "") for f in people]
     out.append("emails:")
-    out += [f"  {e['email']:34} [{e['type']}]" for e in c["emails"]] or ["  (none found)"]
+    out += [f"  {f.value:34} [{f.labels.get('email_type','?')}] x{f.corroboration}" for f in _facts_of(c, "email")] or ["  (none found)"]
     out.append("phones:")
-    out += [f"  {p['number']:18} ({p['sources']} source{'s' if p['sources'] > 1 else ''})"
-            for p in c["phones"]] or ["  (none published)"]
-    if c.get("addresses"):
-        out.append(f"address: {'; '.join(c['addresses'])}")
-    out.append(f"socials: {', '.join(c['socials'][:6]) or '(none)'}")
-    out.append(f"whois:   {c['whois'] or '(private / proxied)'}")
+    out += [f"  {f.value:18} x{f.corroboration} {f.methods}" for f in _facts_of(c, "phone")] or ["  (none published)"]
+    socials = _facts_of(c, "social")
+    out.append(f"socials: {', '.join(f.value for f in socials[:6]) or '(none)'}")
+    if cov.inconclusive or cov.failed:
+        out.append(f"coverage gaps: {len(cov.failed)} failed, {len(cov.inconclusive)} inconclusive")
     return "\n".join(out)
 
 
@@ -477,25 +434,38 @@ def searx_urls(query, limit=10):
 
 
 def prospect(query, limit=10, workers=4):
-    """One category+geo search -> a lead list, each with dug owner contact. The GTM top of funnel."""
+    """One category+geo search -> a lead list, each with contact EVIDENCE. GTM top of funnel."""
     leads = []
     for url in searx_urls(query, limit):
         print(f"[prospect] {url}", file=sys.stderr, flush=True)
-        leads.append(find_contact(url, workers=workers))
+        leads.append(contact_evidence(url, workers=workers))
     return leads
 
 
 def _best_contact(lead):
-    if lead["emails"]:
-        return lead["emails"][0]["email"], lead["emails"][0]["type"]
-    if lead["phones"]:
-        return lead["phones"][0]["number"], "phone"
+    """A default pick over the evidence, via recipes — the app can pick differently."""
+    from . import recipes
+    oe = recipes.owner_email(lead["facts"], prefer=("owner", "person", "role", "functional"))
+    if oe:
+        return oe.value, oe.labels.get("email_type", "email")
+    ph = recipes.rank_phones(lead["facts"])
+    if ph:
+        return ph[0].value, "phone"
     return "-", "-"
 
 
 def render_leads(leads, fmt):
+    from . import recipes
+    def phone(l):
+        ph = recipes.rank_phones(l["facts"])
+        return ph[0].value if ph else ""
+    def socials(l):
+        return [f.value for f in l["facts"] if f.kind == "social"]
+    def reachable(l):
+        return any(f.kind in ("email", "phone") for f in l["facts"])
     if fmt == "json":
-        return json.dumps(leads, indent=2)
+        return json.dumps([{"domain": l["domain"], "facts": [f.as_dict() for f in l["facts"]],
+                            "coverage": l["coverage"].as_dict()} for l in leads], indent=2)
     if fmt == "csv":
         import csv as _csv
         import io
@@ -504,15 +474,13 @@ def render_leads(leads, fmt):
         w.writerow(["business", "best_contact", "contact_type", "phone", "socials"])
         for l in leads:
             best, typ = _best_contact(l)
-            phone = l["phones"][0]["number"] if l["phones"] else ""
-            w.writerow([l["domain"], best, typ, phone, ";".join(l["socials"][:3])])
+            w.writerow([l["domain"], best, typ, phone(l), ";".join(socials(l)[:3])])
         return buf.getvalue().rstrip()
     out = [f"{'business':30} {'best contact':34} {'type':8} phone"]
     for l in leads:
         best, typ = _best_contact(l)
-        phone = l["phones"][0]["number"] if l["phones"] else "-"
-        out.append(f"{l['domain'][:30]:30} {best[:34]:34} {typ:8} {phone}")
-    out.append(f"\n{len(leads)} leads · {sum(1 for l in leads if l['emails'] or l['phones'])} with contact")
+        out.append(f"{l['domain'][:30]:30} {best[:34]:34} {typ:8} {phone(l) or '-'}")
+    out.append(f"\n{len(leads)} leads · {sum(1 for l in leads if reachable(l))} with contact")
     return "\n".join(out)
 
 
@@ -775,8 +743,8 @@ def main() -> None:
         print(render_profiles(hits, "json" if args.format == "json" else "table", verifying))
         return
 
-    if args.find:  # GTM: dig one business's owner contact
-        print(render_contact(find_contact(args.find, workers=args.workers),
+    if args.find:  # GTM: dig one business's contact EVIDENCE
+        print(render_contact(contact_evidence(args.find, workers=args.workers),
                              "json" if args.format == "json" else "table"))
         return
 

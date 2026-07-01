@@ -3,39 +3,48 @@ import json
 
 from pith.cli import (read_targets, run_batch, render, _section_links, score_relevance, gate,
                       _company_social, _company_emails, _registrable, render_enrich,
-                      _email_type, find_contact, render_contact)
+                      _email_type_scoped, contact_evidence, render_contact)
 
 
 def test_email_type_every_class():
     d = "acme.com"
-    assert _email_type("bigboss@gmail.com", d) == "owner"     # freemail on a biz = owner
-    assert _email_type("jane.doe@acme.com", d) == "person"    # on-domain, named
-    assert _email_type("sales@acme.com", d) == "role"         # on-domain, generic mailbox
-    assert _email_type("vendor@other.io", d) == "other"       # off-domain corporate
-    assert _email_type("x@0-mail.com", d) == "drop"           # disposable
-    assert _email_type("not-an-email", d) == "drop"           # invalid syntax
+    assert _email_type_scoped("bigboss@gmail.com", d) == "owner"    # freemail on a biz = owner
+    assert _email_type_scoped("jane.doe@acme.com", d) == "person"   # on-domain, name-like
+    assert _email_type_scoped("sales@acme.com", d) == "role"        # on-domain, generic mailbox
+    assert _email_type_scoped("accommodations@acme.com", d) == "functional"  # on-domain, not a person
+    assert _email_type_scoped("vendor@other.io", d) == "external"   # off-domain
+    assert _email_type_scoped("x@0-mail.com", d) == "drop"          # disposable
 
 
-def test_find_contact_ranks_owner_first_drops_junk(monkeypatch):
+def _page(url, text, html):
+    """A Result whose facts are the real evidence enrich() produces for this page."""
+    from pith.extract import enrich
+    r = Result(url=url)
+    r.facts = enrich(text, html, source_url=url)["facts"]
+    return r
+
+
+def test_contact_evidence_types_emails_and_recipe_picks(monkeypatch):
     from pith import cli
+    from pith import recipes
+    text = "owner@gmail.com jane.doe@acme.com sales@acme.com junk@0-mail.com call (316) 555-0142"
+    r = _page("https://acme.com/contact", text, f"<p>{text}</p>")
     monkeypatch.setattr(cli, "crawl_site", lambda w, limit=8: [(None, w)])
     monkeypatch.setattr(cli, "_whois_registrant", lambda d: {})
+    monkeypatch.setattr(cli, "Extractor", lambda: type("E", (), {
+        "extract": lambda self, urls, **kw: ExtractResult(results=[r])})())
 
-    class _Ex:
-        def extract(self, urls, **kw):
-            return ExtractResult(results=[Result(url=urls[0],
-                emails=["sales@acme.com", "owner@gmail.com", "jane@acme.com", "junk@0-mail.com"],
-                phones=["+1-555-000-1111"], socials=["https://facebook.com/acme"])])
-    monkeypatch.setattr(cli, "Extractor", lambda: _Ex())
-
-    c = find_contact("https://acme.com")
-    types = [e["type"] for e in c["emails"]]
-    assert types[0] == "owner"                         # gmail owner ranked first
-    assert types == ["owner", "person", "role"]        # disposable dropped, right order
-    assert c["phones"] == [{"number": "+1-555-000-1111", "sources": 1}]
+    ev = contact_evidence("https://acme.com")
+    types = {f.value: f.labels["email_type"] for f in ev["facts"] if f.kind == "email"}
+    assert types.get("owner@gmail.com") == "owner"
+    assert types.get("jane.doe@acme.com") == "person"
+    assert types.get("sales@acme.com") == "role"
+    assert "junk@0-mail.com" not in types                          # disposable dropped
+    # the recipe applies the caller's judgment — freemail owner preferred
+    assert recipes.owner_email(ev["facts"], prefer=("owner", "person", "role")).value == "owner@gmail.com"
 
 
-def test_find_contact_survives_crawl_failure(monkeypatch):
+def test_contact_evidence_survives_crawl_failure(monkeypatch):
     from pith import cli
     def boom(w, limit=8):
         raise RuntimeError("dead site")
@@ -43,17 +52,18 @@ def test_find_contact_survives_crawl_failure(monkeypatch):
     monkeypatch.setattr(cli, "_whois_registrant", lambda d: {})
     monkeypatch.setattr(cli, "Extractor", lambda: type("E", (), {
         "extract": lambda self, urls, **kw: ExtractResult(errors=[{"url": urls[0], "error": "x"}])})())
-    c = find_contact("https://dead.example")           # must not raise
-    assert c["emails"] == [] and c["phones"] == []
+    ev = contact_evidence("https://dead.example")                  # must not raise
+    assert ev["facts"] == [] and ev["coverage"].failed
 
 
 def test_render_contact_json_and_empty():
-    c = {"website": "x", "domain": "x.com", "pages": 0, "people": [], "emails": [], "phones": [], "socials": [], "whois": {}}
+    from pith.evidence import Coverage
+    c = {"domain": "x.com", "facts": [], "coverage": Coverage(checked=["x"]), "whois": {}}
     assert '"domain": "x.com"' in render_contact(c, "json")
     assert "(none found)" in render_contact(c, "table")
 
 
-def test_find_contact_surfaces_schema_person(monkeypatch):
+def test_contact_evidence_surfaces_schema_person(monkeypatch):
     from pith import cli
     monkeypatch.setattr(cli, "crawl_site", lambda w, limit=8: [(None, w)])
     monkeypatch.setattr(cli, "_whois_registrant", lambda d: {})
@@ -62,8 +72,9 @@ def test_find_contact_surfaces_schema_person(monkeypatch):
         {"@type": "Organization", "name": "Acme"}])
     monkeypatch.setattr(cli, "Extractor", lambda: type("E", (), {
         "extract": lambda self, urls, **kw: ExtractResult(results=[r])})())
-    c = cli.find_contact("https://acme.com")
-    assert c["people"] == [{"name": "Jeff Smith", "title": "Owner"}]
+    ev = cli.contact_evidence("https://acme.com")
+    people = [(f.value, f.labels.get("title")) for f in ev["facts"] if f.kind == "name"]
+    assert people == [("Jeff Smith", "Owner")]
 
 
 def test_parse_yp_extracts_records():
@@ -107,15 +118,19 @@ def test_searx_urls_requires_env(monkeypatch):
 
 def test_render_leads_csv_falls_back_to_phone():
     from pith.cli import render_leads
+    from pith.evidence import Fact, Source, Coverage
+    def lead(dom, facts):
+        return {"domain": dom, "facts": facts, "coverage": Coverage(ok=["u"])}
     leads = [
-        {"domain": "a.com", "emails": [{"email": "o@gmail.com", "type": "owner"}], "phones": [{"number": "555", "sources": 2}], "socials": ["fb"]},
-        {"domain": "b.com", "emails": [], "phones": [{"number": "999", "sources": 1}], "socials": []},  # no email -> phone
-        {"domain": "c.com", "emails": [], "phones": [], "socials": []},                                  # nothing
+        lead("a.com", [Fact("o@gmail.com", "email", [Source("u", "text")], {"email_type": "owner"}),
+                       Fact("(316) 555-0142", "phone", [Source("u", "text")])]),
+        lead("b.com", [Fact("(316) 555-0999", "phone", [Source("u", "text")])]),   # no email -> phone
+        lead("c.com", []),                                                          # nothing
     ]
     out = render_leads(leads, "csv")
     assert "business,best_contact,contact_type" in out.splitlines()[0]
     assert "a.com,o@gmail.com,owner" in out
-    assert "b.com,999,phone" in out
+    assert "b.com,(316) 555-0999,phone" in out
 from pith.core import Result, ExtractResult
 
 

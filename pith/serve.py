@@ -75,9 +75,11 @@ def _extract(body):
 
 
 def _contact(body):
-    from .cli import find_contact
+    from .cli import contact_evidence
     from .core import _guard_url
-    return find_contact(_guard_url(_str(body, "website")), workers=_int(body, "workers", 4))
+    ev = contact_evidence(_guard_url(_str(body, "website")), workers=_int(body, "workers", 4))
+    return {"domain": ev["domain"], "facts": [f.as_dict() for f in ev["facts"]],
+            "coverage": ev["coverage"].as_dict()}   # evidence, not a pick — apply pith.recipes on top
 
 
 def _intel(body):
