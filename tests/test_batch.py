@@ -127,8 +127,8 @@ def test_render_enrich_csv():
     rows = [{"company": "Acme", "website": "https://acme.com", "pages": 3, "linkedin": "https://linkedin.com/company/acme",
              "github": None, "twitter": None, "careers": True, "emails": ["hi@acme.com"]}]
     csv_out = render_enrich(rows, "csv")
-    assert "company,website,pages" in csv_out.splitlines()[0]
-    assert "Acme,https://acme.com,3" in csv_out and "hi@acme.com" in csv_out
+    assert csv_out.splitlines()[0].startswith("company,website,grade,builder")
+    assert "hi@acme.com" in csv_out and "Acme" in csv_out
 
 
 def test_score_relevance_counts_query_tokens():

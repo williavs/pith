@@ -148,6 +148,12 @@ def enrich_company(name: str, website: str, workers: int = 4) -> dict:
         socials |= set(r.socials)
         emails |= set(r.emails)
     urls = [r.url for r in out.results]
+    from .core import _fetch_static
+    from .techstack import analyze
+    try:                                         # tech/modernness column (one homepage fetch)
+        a = analyze(_fetch_static(website), website)
+    except Exception:
+        a = {"modernness_grade": "?", "builder": "?", "hosted_builder": None}
     return {
         "company": name, "website": website, "pages": len(out.results),
         "linkedin": _company_social(socials, name, "linkedin.com/company"),
@@ -155,6 +161,7 @@ def enrich_company(name: str, website: str, workers: int = 4) -> dict:
         "twitter": _company_social(socials, name, "twitter.com") or _company_social(socials, name, "x.com"),
         "emails": _company_emails(emails, website),
         "careers": any("career" in u.lower() or "/job" in u.lower() for u in urls),
+        "grade": a.get("modernness_grade"), "builder": a.get("builder"), "hosted": a.get("hosted_builder"),
     }
 
 
@@ -313,13 +320,54 @@ def render_leads(leads, fmt):
     return "\n".join(out)
 
 
+# --- website tech + modernness intel (for selling website services) ---
+
+def _domain_age_years(domain: str):
+    import subprocess
+    try:
+        out = subprocess.run(["whois", domain], capture_output=True, text=True, timeout=20).stdout
+    except Exception:
+        return None
+    m = re.search(r"(?:Creation Date|Registered on|Registration Time|created)\D{0,4}(\d{4})", out, re.I)
+    return (2026 - int(m.group(1))) if m else None
+
+
+def website_intel(url: str) -> dict:
+    """Homepage -> tech stack + modernness grade + domain age. For finding dated sites to pitch."""
+    from .core import _fetch_static, _fetch_js, _needs_browser
+    from .techstack import analyze
+    try:
+        html = _fetch_js(url) if _needs_browser(url) else _fetch_static(url)
+    except Exception:
+        html = ""
+    a = analyze(html, url)
+    a["domain"] = _registrable(url)
+    a["domain_age_years"] = _domain_age_years(a["domain"])
+    return a
+
+
+def render_intel(a: dict, fmt: str) -> str:
+    if fmt == "json":
+        return json.dumps(a, indent=2)
+    age = f"{a['domain_age_years']} yrs" if a["domain_age_years"] else "?"
+    return "\n".join([
+        f"SITE: {a['domain']}",
+        f"  grade:      {a['modernness_grade']}  ({a['modernness_score']}/100)",
+        f"  builder:    {a['builder']}" + ("   (paying a hosted service — switch pitch)" if a["hosted_builder"] else ""),
+        f"  framework:  {a['framework'] or '-'}",
+        f"  responsive: {a['responsive']}    https: {a['https']}",
+        f"  domain age: {age}    copyright: {a['copyright_year'] or '?'}",
+        f"  dated:      {', '.join(a['dated_signals']) or 'none'}",
+    ])
+
+
 def render_enrich(rows, fmt: str) -> str:
     if fmt == "json":
         return json.dumps(rows, indent=2)
     if fmt == "csv":
         import csv as _csv
         import io
-        cols = ["company", "website", "pages", "linkedin", "github", "twitter", "careers", "emails"]
+        cols = ["company", "website", "grade", "builder", "hosted", "pages", "linkedin", "github", "twitter", "careers", "emails"]
         buf = io.StringIO()
         w = _csv.DictWriter(buf, fieldnames=cols, extrasaction="ignore")
         w.writeheader()
@@ -327,10 +375,10 @@ def render_enrich(rows, fmt: str) -> str:
             w.writerow({**r, "emails": ";".join(r["emails"])})
         return buf.getvalue().rstrip()
     # table
-    out = [f"{'company':14} {'pg':>2} {'careers':7} {'linkedin':30} emails"]
+    out = [f"{'company':14} {'grd':3} {'builder':16} {'careers':7} {'linkedin':28} emails"]
     for r in rows:
-        out.append(f"{r['company'][:14]:14} {r['pages']:>2} {'yes' if r['careers'] else '-':7} "
-                   f"{(r['linkedin'] or '-')[:30]:30} {','.join(r['emails'])[:40]}")
+        out.append(f"{r['company'][:14]:14} {(r.get('grade') or '?'):3} {(r.get('builder') or '?')[:16]:16} "
+                   f"{'yes' if r['careers'] else '-':7} {(r['linkedin'] or '-')[:28]:28} {','.join(r['emails'])[:34]}")
     return "\n".join(out)
 
 
@@ -458,6 +506,7 @@ def main() -> None:
     ap.add_argument("--match", metavar="SUBSTR", help="with --sitemap: keep only URLs containing this substring")
     ap.add_argument("--limit", type=int, default=25, help="cap pages gathered by --sitemap/--crawl (default 25)")
     ap.add_argument("--prospect", metavar="QUERY", help="GTM: search a category+geo (needs $PITH_SEARX_URL) -> a lead list, each with dug owner contact")
+    ap.add_argument("--intel", metavar="URL", help="GTM: website tech stack + modernness grade + domain age (find dated sites to sell services to)")
     ap.add_argument("--find", metavar="URL", help="GTM: dig a business's public owner contact (ranked emails, phones, socials, WHOIS)")
     ap.add_argument("--enrich", metavar="FILE", help="GTM: read a company list (name,website csv) and output an enriched row per company (socials, emails, careers)")
     ap.add_argument("--about", metavar="QUERY", help="batch: rank candidates by relevance to this (e.g. a target name+company) and fetch the most relevant first")
@@ -477,6 +526,10 @@ def main() -> None:
     if args.prospect:  # GTM: search a category+geo -> lead list with owner contact
         leads = prospect(args.prospect, limit=args.limit, workers=args.workers)
         print(render_leads(leads, "table" if args.format == "md" else args.format))
+        return
+
+    if args.intel:  # GTM: website tech + modernness intel
+        print(render_intel(website_intel(args.intel), "json" if args.format == "json" else "table"))
         return
 
     if args.find:  # GTM: dig one business's owner contact
