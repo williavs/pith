@@ -3,86 +3,121 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>SCOUT — outdated-site prospecting</title>
+<title>Scout — prospecting intelligence</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700;800&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,600;9..144,900&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
 <style>
   :root{
-    --bg:#0a0e0a; --panel:#0d120d; --panel2:#111811; --line:#1f2a1f;
-    --green:#3fb950; --amber:#d29922; --red:#f85149; --dim:#6e7681; --fg:#c9d1c9;
+    --paper:#faf8f4; --panel:#f2ede3; --panel2:#ece5d8;
+    --ink:#211c16; --dim:#8a8074; --faint:#b6ac9c; --line:#e4ddcf;
+    --ox:#8b2b2b; --ox2:#a8402f; --ochre:#9a6a1a; --sage:#4d6b45;
+    --mono:"JetBrains Mono",monospace; --serif:"Fraunces",Georgia,serif;
   }
   *{box-sizing:border-box}
+  html,body{margin:0}
   body{
-    margin:0; background:var(--bg); color:var(--fg);
-    font-family:"JetBrains Mono",monospace; font-size:13px; line-height:1.5;
+    background:var(--paper); color:var(--ink); font-family:var(--mono); font-size:13px; line-height:1.5;
+    background-image:radial-gradient(var(--line) 0.5px, transparent 0.5px);
+    background-size:22px 22px;
   }
-  a{color:#5b9bd5; text-decoration:none} a:hover{text-decoration:underline}
+  a{color:var(--ox); text-decoration:none} a:hover{text-decoration:underline}
+  ::selection{background:#e7d6c2}
+
   header{
-    padding:18px 22px; border-bottom:1px solid var(--line);
-    background:
-      repeating-linear-gradient(90deg,transparent,transparent 3px,rgba(63,185,80,.03) 3px,rgba(63,185,80,.03) 4px),
-      var(--panel);
-    display:flex; align-items:baseline; gap:16px; flex-wrap:wrap;
+    padding:22px 30px 16px; border-bottom:2px solid var(--ink);
+    display:flex; align-items:flex-end; gap:18px; flex-wrap:wrap; background:var(--paper);
   }
-  header h1{margin:0; font-size:26px; font-weight:800; letter-spacing:4px; color:var(--green)}
-  header .sub{color:var(--dim); letter-spacing:1px}
+  header h1{
+    margin:0; font-family:var(--serif); font-weight:900; font-size:40px; letter-spacing:-1px;
+    line-height:.9; color:var(--ink);
+  }
+  header h1 .dot{color:var(--ox)}
+  header .sub{font-family:var(--serif); font-style:italic; font-weight:400; font-size:16px; color:var(--dim); padding-bottom:3px}
   header .spacer{flex:1}
-  .controls{display:flex; gap:10px; align-items:center; padding:14px 22px; border-bottom:1px solid var(--line); flex-wrap:wrap}
-  .funnel{display:flex; align-items:center; gap:8px; padding:8px 22px; border-bottom:1px solid var(--line); flex-wrap:wrap; min-height:34px}
-  .fseg{font-size:12px; color:var(--dim)} .fseg b{color:var(--fg); font-size:15px; margin-right:2px}
-  .fseg.hot b{color:var(--green)} .farrow{color:var(--line)}
-  .tput{color:var(--amber); margin-left:auto; font-weight:700}
-  label{color:var(--dim); text-transform:uppercase; letter-spacing:1px; font-size:11px}
+
+  .controls{display:flex; gap:12px; align-items:center; padding:14px 30px; border-bottom:1px solid var(--line); flex-wrap:wrap}
+  label{color:var(--dim); text-transform:uppercase; letter-spacing:1.5px; font-size:10px; font-weight:500}
   select,input{
-    background:var(--panel2); color:var(--fg); border:1px solid var(--line);
-    padding:7px 9px; font-family:inherit; font-size:13px; border-radius:3px;
+    background:var(--paper); color:var(--ink); border:1px solid var(--line); border-radius:2px;
+    padding:8px 10px; font-family:var(--mono); font-size:13px;
   }
-  input#category{width:150px} input#limit{width:64px}
-  select:focus,input:focus{outline:none; border-color:var(--green)}
+  input#category{width:150px} input#limit{width:60px}
+  select:focus,input:focus{outline:none; border-color:var(--ox)}
   button{
-    background:transparent; color:var(--green); border:1px solid var(--green);
-    padding:7px 16px; font-family:inherit; font-weight:700; text-transform:uppercase;
-    letter-spacing:2px; cursor:pointer; border-radius:3px; font-size:12px;
+    background:var(--ink); color:var(--paper); border:1px solid var(--ink); border-radius:2px;
+    padding:9px 20px; font-family:var(--mono); font-weight:700; text-transform:uppercase; letter-spacing:2px;
+    cursor:pointer; font-size:12px;
   }
-  button:hover{background:var(--green); color:#04120a}
-  button:disabled{opacity:.4; cursor:not-allowed; background:transparent; color:var(--dim); border-color:var(--line)}
-  button.ghost{color:var(--amber); border-color:var(--amber)}
-  button.ghost:hover{background:var(--amber); color:#1a1200}
-  button.small{padding:4px 10px; font-size:11px; letter-spacing:1px}
-  main{display:grid; grid-template-columns:1.9fr 1fr; gap:0; height:calc(100vh - 118px)}
-  #cards{overflow-y:auto; padding:16px; display:flex; flex-direction:column; gap:14px}
-  #logwrap{border-left:1px solid var(--line); background:#070a07; display:flex; flex-direction:column}
-  #logwrap .lh{padding:8px 14px; border-bottom:1px solid var(--line); color:var(--dim); text-transform:uppercase; letter-spacing:2px; font-size:11px}
-  #log{flex:1; overflow-y:auto; padding:10px 14px; font-size:12px; color:#7fdf8f; white-space:pre-wrap; word-break:break-word}
-  #log .err{color:var(--red)} #log .hit{color:var(--amber)}
-  .cursor{display:inline-block; width:8px; height:14px; background:var(--green); animation:blink 1s steps(1) infinite; vertical-align:middle}
+  button:hover{background:var(--ox); border-color:var(--ox)}
+  button:disabled{opacity:.4; cursor:not-allowed}
+  button.ghost{background:transparent; color:var(--ox); border-color:var(--ox)}
+  button.ghost:hover{background:var(--ox); color:var(--paper)}
+  button.small{padding:5px 12px; font-size:10px; letter-spacing:1.5px}
+
+  .funnel{display:flex; align-items:center; gap:14px; padding:12px 30px; border-bottom:1px solid var(--line); flex-wrap:wrap; min-height:44px; background:var(--panel)}
+  .fseg{display:flex; align-items:baseline; gap:6px; color:var(--dim); text-transform:uppercase; letter-spacing:1px; font-size:10px}
+  .fseg b{font-family:var(--serif); font-weight:900; font-size:22px; letter-spacing:0; color:var(--ink)}
+  .fseg.hot b{color:var(--ox)}
+  .farrow{color:var(--faint)}
+  .tput{margin-left:auto; font-weight:700; color:var(--ochre); letter-spacing:.5px}
+
+  main{display:grid; grid-template-columns:1.75fr 1fr; height:calc(100vh - 176px)}
+  #cards{overflow-y:auto; padding:22px 24px; display:flex; flex-direction:column; gap:18px}
+  .empty{color:var(--dim); padding:50px 30px; border:1px dashed var(--line); border-radius:4px; text-align:center; font-family:var(--serif); font-style:italic; font-size:16px}
+
+  /* live feed panel — parchment, not a black terminal */
+  #feed{border-left:1px solid var(--line); background:var(--panel); display:flex; flex-direction:column}
+  #feed .fh{padding:10px 18px; border-bottom:1px solid var(--line); color:var(--dim); text-transform:uppercase; letter-spacing:2px; font-size:10px; display:flex; justify-content:space-between}
+  #feed .fh b{color:var(--ox); font-weight:700}
+  #log{flex:1; overflow-y:auto; padding:10px 16px; font-size:11.5px; color:var(--ink); white-space:pre-wrap; word-break:break-word}
+  #log > div{padding:1px 0}
+  #log .l-phase{color:var(--ink); font-weight:700; margin-top:8px; border-top:1px solid var(--line); padding-top:6px}
+  #log .l-phase::before{content:"▸ "; color:var(--ox)}
+  #log .l-grade{color:#5c534733}   /* overridden below */
+  #log .l-grade{color:#6f6656}
+  #log .l-tier{color:var(--faint); font-size:10.5px}
+  #log .l-tierfail{color:var(--ox2); font-size:10.5px}
+  #log .l-hit{color:var(--ox); font-weight:700}
+  #log .l-stat{color:var(--ochre); font-weight:700}
+  .cursor{display:inline-block; width:7px; height:13px; background:var(--ox); animation:blink 1.1s steps(1) infinite; vertical-align:middle}
   @keyframes blink{50%{opacity:0}}
-  .empty{color:var(--dim); padding:40px; text-align:center; border:1px dashed var(--line); border-radius:4px}
-  .card{flex:none; border:1px solid var(--line); background:var(--panel); border-radius:4px; box-shadow:0 2px 0 #060906; overflow:hidden}
-  .card .top{display:flex; align-items:center; gap:12px; padding:12px 14px; border-bottom:1px solid var(--line)}
-  .grade{width:34px; height:34px; display:flex; align-items:center; justify-content:center; font-weight:800; font-size:18px; border-radius:3px; flex:none}
-  .g-F,.g-D{background:var(--red); color:#1a0000} .g-C{background:var(--amber); color:#1a1200} .g-A,.g-B{background:var(--green); color:#04120a} .g-\?{background:var(--line); color:var(--dim)}
-  .card .name{font-weight:700; font-size:15px; color:#eafbea}
-  .card .score{margin-left:auto; color:var(--dim); font-size:11px}
-  .card .body{padding:12px 14px; display:flex; flex-direction:column; gap:9px}
-  .meta{color:var(--dim); font-size:12px}
-  .block .bh{color:var(--dim); text-transform:uppercase; letter-spacing:1px; font-size:10px; margin-bottom:3px}
-  .badge{font-size:10px; padding:1px 6px; border-radius:2px; background:var(--panel2); border:1px solid var(--line); color:var(--dim); text-transform:uppercase; letter-spacing:.5px}
-  .badge.owner{color:var(--green); border-color:var(--green)}
-  .row{display:flex; gap:8px; align-items:center; flex-wrap:wrap}
-  .starter{padding:3px 0}
-  .s-RUIN{color:#ff8a80} .s-ROUTE{color:var(--green)} .s-MULTIPLY{color:var(--amber)} .s-CONTEXT{color:var(--dim)}
-  .deep{margin-top:6px; border-top:1px dashed var(--line); padding-top:9px}
-  .prof{display:flex; gap:8px; align-items:center; font-size:12px; padding:1px 0}
-  .conf{color:var(--green); font-weight:700}
-  .kchip{font-size:9px; padding:0 4px; border-radius:2px; background:var(--panel2); border:1px solid var(--line); color:var(--dim)}
+
+  /* opportunity dossier card */
+  .card{background:var(--paper); border:1px solid var(--line); border-left:3px solid var(--ox); border-radius:3px; box-shadow:2px 3px 0 rgba(33,28,22,.05)}
+  .card .top{display:flex; align-items:flex-start; gap:14px; padding:15px 18px 12px; border-bottom:1px solid var(--line)}
+  .grade{width:38px; height:38px; flex:none; display:flex; align-items:center; justify-content:center; font-family:var(--serif); font-weight:900; font-size:20px; border-radius:2px; color:var(--paper)}
+  .g-F,.g-D{background:var(--ox)} .g-C{background:var(--ochre)} .g-A,.g-B{background:var(--sage)} .g-\?{background:var(--faint)}
+  .card .name{font-family:var(--serif); font-weight:600; font-size:19px; line-height:1.15; color:var(--ink)}
+  .card .name .chip{font-family:var(--mono); font-weight:500; font-size:9px; text-transform:uppercase; letter-spacing:1px; color:var(--dim); border:1px solid var(--line); border-radius:2px; padding:1px 5px; vertical-align:middle; margin-left:6px}
+  .card .sub{color:var(--dim); font-size:12px; margin-top:3px}
+  .card .score{margin-left:auto; text-align:right; flex:none}
+  .card .score b{font-family:var(--serif); font-weight:900; font-size:24px; color:var(--ox)}
+  .card .score span{display:block; font-size:9px; text-transform:uppercase; letter-spacing:1.5px; color:var(--dim)}
+  .card .body{padding:14px 18px; display:flex; flex-direction:column; gap:12px}
+  .tech{color:var(--dim); font-size:12px}
+  .tech b{color:var(--ink); font-weight:500}
+  .block .bh{color:var(--dim); text-transform:uppercase; letter-spacing:1.5px; font-size:9px; margin-bottom:4px}
+  .badge{font-size:9px; padding:1px 6px; border-radius:2px; border:1px solid var(--line); color:var(--dim); text-transform:uppercase; letter-spacing:.5px}
+  .badge.owner{color:var(--ox); border-color:var(--ox); font-weight:700}
+  .row{display:flex; gap:10px; align-items:center; flex-wrap:wrap}
+  .starters{display:flex; flex-direction:column; gap:5px}
+  .starter{padding-left:10px; border-left:2px solid var(--line); font-size:12.5px; line-height:1.45}
+  .starter .tag{font-weight:700; letter-spacing:.5px}
+  .s-RUIN{border-color:var(--ox)} .s-RUIN .tag{color:var(--ox)}
+  .s-ROUTE{border-color:var(--sage)} .s-ROUTE .tag{color:var(--sage)}
+  .s-MULTIPLY{border-color:var(--ochre)} .s-MULTIPLY .tag{color:var(--ochre)}
+  .s-CONTEXT .tag{color:var(--dim)}
+  .deep{border-top:1px dashed var(--line); padding-top:11px}
+  .prof{display:flex; gap:9px; align-items:center; font-size:12px; padding:1px 0}
+  .kchip{font-size:9px; padding:0 5px; border-radius:2px; background:var(--panel2); color:var(--dim)}
+  .conf{color:var(--sage); font-weight:700}
 </style>
 </head>
 <body>
 <header>
-  <h1>SCOUT</h1>
-  <span class="sub">outdated-site prospecting // powered by pith</span>
+  <h1>Scout<span class="dot">.</span></h1>
+  <span class="sub">prospecting intelligence — powered by pith</span>
   <span class="spacer"></span>
   <button class="ghost small" id="export">Export JSON</button>
 </header>
@@ -93,14 +128,14 @@
   <label>or category</label><input id="category" placeholder="trades" value="trades">
   <label>count</label><input id="limit" type="number" value="25" min="1" max="50">
   <button id="scout">Scout</button>
-  <span id="status" class="meta"></span>
+  <span id="status" class="tech"></span>
 </div>
-<div id="funnel" class="funnel"><span class="fseg meta">pith funnel — appears live during a sweep</span></div>
+<div id="funnel" class="funnel"><span class="fseg" style="font-family:var(--serif);font-style:italic;text-transform:none;letter-spacing:0;font-size:14px">the funnel fills as pith works…</span></div>
 
 <main>
-  <div id="cards"><div class="empty">pick an area + category, hit SCOUT.<br>pith builds the list, grades sites, digs owner contact — live.</div></div>
-  <div id="logwrap">
-    <div class="lh">// live — pith backend</div>
+  <div id="cards"><div class="empty">Pick an area and a bundle, then run Scout.<br>pith builds the list, grades every site, and digs the owner — live.</div></div>
+  <div id="feed">
+    <div class="fh"><span>live feed</span><b>pith</b></div>
     <div id="log"><span class="cursor"></span></div>
   </div>
 </main>
@@ -111,57 +146,58 @@ const esc = s => String(s==null?"":s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&
 const cardsEl=$("#cards"), logEl=$("#log"), scoutBtn=$("#scout"), statusEl=$("#status");
 let opportunities=[], es=null;
 
-function log(msg, cls){
+function log(msg, kind){
   const line=document.createElement("div");
-  if(cls) line.className=cls;
+  if(kind) line.className="l-"+kind;
   line.textContent=msg;
-  logEl.insertBefore(line, logEl.lastChild);          // keep cursor last
+  logEl.insertBefore(line, logEl.lastChild);   // keep cursor last
   logEl.scrollTop=logEl.scrollHeight;
 }
 
 fetch("/areas").then(r=>r.json()).then(d=>{
   $("#area").innerHTML=d.areas.map(a=>`<option>${esc(a)}</option>`).join("");
   $("#bundle").innerHTML='<option value="">— preset —</option>'+d.bundles.map(b=>`<option>${esc(b)}</option>`).join("");
-}).catch(()=>log("could not load areas","err"));
+}).catch(()=>log("could not load areas","tierfail"));
 $("#bundle").addEventListener("change", e=>{ if(e.target.value) $("#category").value=e.target.value; });
 
 function renderFunnel(s, tput){
   const segs=[["scanned",s.scanned],["with site",s.with_site],["dated",s.dated],["opportunities",s.opportunities]];
-  $("#funnel").innerHTML=segs.map(([k,v],i)=>`<span class="fseg${i===3?' hot':''}"><b>${v}</b>${esc(k)}</span>`).join('<span class="farrow">→</span>')
-    + (tput?`<span class="tput">⚡ ${esc(tput)}</span>`:"");
+  $("#funnel").innerHTML=segs.map(([k,v],i)=>`<span class="fseg${i===3?' hot':''}"><b>${v}</b> ${esc(k)}</span>`).join('<span class="farrow">→</span>')
+    + (tput?`<span class="tput">${esc(tput)}</span>`:"");
 }
 
 function gradeClass(g){ return "g-"+(g||"?"); }
 
 function renderCard(o){
   const el=document.createElement("div"); el.className="card"; el.dataset.score=o.score;
-  const people=(o.owner.people||[]).map(p=>esc(p.name)+(p.title?` — ${esc(p.title)}`:"")).join(", ");
-  const emails=(o.owner.emails||[]).map(e=>`<span class="row"><span class="badge ${e.type==='owner'?'owner':''}">${esc(e.type)}</span> ${esc(e.email)}</span>`).join("");
-  const phones=(o.owner.phones||[]).map(p=>`${esc(p.number)} <span class="meta">(${p.sources} src)</span>`).join(" · ");
+  const emails=(o.owner.emails||[]).map(e=>`<span class="row" style="gap:6px"><span class="badge ${e.type==='owner'?'owner':''}">${esc(e.type)}</span> ${esc(e.email)}</span>`).join("");
+  const phones=(o.owner.phones||[]).map(p=>`${esc(p.number)} <span class="tech">(${p.sources} src)</span>`).join(" · ");
   const socials=(o.owner.socials||[]).map(s=>`<a href="${esc(s)}" target="_blank">${esc(s.replace(/^https?:\/\/(www\.)?/,''))}</a>`).join(" · ");
+  const people=(o.owner.people||[]).map(p=>esc(p.name)+(p.title?` — ${esc(p.title)}`:"")).join(", ");
   const starters=(o.conversation_starters||[]).map(s=>{
-    const tag=(s.split(":")[0]||"").trim();
-    return `<div class="starter s-${esc(tag)}">${esc(s)}</div>`;
+    const i=s.indexOf(":"); const tag=(i>0?s.slice(0,i):"").trim(); const rest=i>0?s.slice(i+1).trim():s;
+    return `<div class="starter s-${esc(tag)}"><span class="tag">${esc(tag)}</span> ${esc(rest)}</div>`;
   }).join("");
   el.innerHTML=`
     <div class="top">
       <div class="grade ${gradeClass(o.grade)}">${esc(o.grade)}</div>
-      <div><div class="name">${esc(o.name)}${o.category?` <span class="badge">${esc(o.category)}</span>`:""}</div>
-        <div class="meta"><a href="${esc(o.website)}" target="_blank">${esc(o.website)}</a>${o.address?" · "+esc(o.address):""}</div></div>
-      <div class="score">score ${o.score}</div>
+      <div>
+        <div class="name">${esc(o.name)}${o.category?`<span class="chip">${esc(o.category)}</span>`:""}</div>
+        <div class="sub"><a href="${esc(o.website)}" target="_blank">${esc(o.website)}</a>${o.address?" · "+esc(o.address):""}</div>
+      </div>
+      <div class="score"><b>${o.score}</b><span>score</span></div>
     </div>
     <div class="body">
-      <div class="meta">${esc(o.builder||"?")}${o.hosted_builder?" (hosted)":""} · ${o.domain_age_years?o.domain_age_years+"yr":"?"} · responsive:${o.responsive?"yes":"NO"}</div>
+      <div class="tech"><b>${esc(o.builder||"?")}</b>${o.hosted_builder?" (hosted)":""} · ${o.domain_age_years?o.domain_age_years+" yrs":"age ?"} · responsive ${o.responsive?"yes":"<b style='color:var(--ox)'>no</b>"}</div>
       ${people?`<div class="block"><div class="bh">owner</div><div>${people}</div></div>`:""}
       ${emails?`<div class="block"><div class="bh">emails</div>${emails}</div>`:""}
       ${phones?`<div class="block"><div class="bh">phones</div><div>${phones}</div></div>`:""}
       ${socials?`<div class="block"><div class="bh">socials</div><div class="row">${socials}</div></div>`:""}
-      <div class="block"><div class="bh">conversation starters</div>${starters}</div>
-      <div class="row"><button class="ghost small deepbtn">Deep Scan</button></div>
+      <div class="block"><div class="bh">conversation starters — route · ruin · multiply</div><div class="starters">${starters}</div></div>
+      <div class="row"><button class="ghost small deepbtn">Deep Scan ▸</button></div>
       <div class="deep" style="display:none"></div>
     </div>`;
   el.querySelector(".deepbtn").addEventListener("click", ()=>deepScan(o.website, el));
-  // insert keeping score descending
   const others=[...cardsEl.querySelectorAll(".card")];
   const after=others.find(c=>Number(c.dataset.score)<o.score);
   cardsEl.insertBefore(el, after||null);
@@ -169,16 +205,16 @@ function renderCard(o){
 
 function deepScan(website, cardEl){
   const box=cardEl.querySelector(".deep"), btn=cardEl.querySelector(".deepbtn");
-  box.style.display="block"; box.innerHTML='<div class="meta">scanning public profiles…</div>'; btn.disabled=true;
+  box.style.display="block"; box.innerHTML='<div class="tech">scanning public profiles…</div>'; btn.disabled=true;
   const d=new EventSource("/deep?website="+encodeURIComponent(website));
-  d.addEventListener("log",e=>log("  "+JSON.parse(e.data).msg));
+  d.addEventListener("log",e=>log("  "+JSON.parse(e.data).msg,"tier"));
   d.addEventListener("done",e=>{
     const p=JSON.parse(e.data).person; d.close(); btn.disabled=false;
-    if(!p||!p.profiles||!p.profiles.length){ box.innerHTML='<div class="meta">no verified profiles</div>'; return; }
-    const rows=p.profiles.map(pr=>`<div class="prof"><span class="kchip">${esc(pr.kind)}</span><a href="${esc(pr.url)}" target="_blank">${esc(pr.site)}</a> <span class="conf">${Math.round(pr.confidence*100)}%</span> <span class="meta">${esc((pr.signals||[]).join("+"))}</span></div>`).join("");
-    box.innerHTML=`<div class="bh">verified profiles · confidence ${Math.round(p.confidence*100)}%</div>${rows}<div class="meta">best channels: ${esc((p.best_channels||[]).join(", "))}</div>`;
+    if(!p||!p.profiles||!p.profiles.length){ box.innerHTML='<div class="tech">no verified profiles</div>'; return; }
+    const rows=p.profiles.map(pr=>`<div class="prof"><span class="kchip">${esc(pr.kind)}</span><a href="${esc(pr.url)}" target="_blank">${esc(pr.site)}</a> <span class="conf">${Math.round(pr.confidence*100)}%</span> <span class="tech">${esc((pr.signals||[]).join("+"))}</span></div>`).join("");
+    box.innerHTML=`<div class="bh">verified profiles — confidence ${Math.round(p.confidence*100)}%</div>${rows}<div class="tech" style="margin-top:5px">best channels: ${esc((p.best_channels||[]).join(", "))}</div>`;
   });
-  d.onerror=()=>{ d.close(); btn.disabled=false; box.innerHTML='<div class="meta">deep scan failed</div>'; };
+  d.onerror=()=>{ d.close(); btn.disabled=false; box.innerHTML='<div class="tech">deep scan failed</div>'; };
 }
 
 scoutBtn.addEventListener("click", ()=>{
@@ -187,15 +223,15 @@ scoutBtn.addEventListener("click", ()=>{
   scoutBtn.disabled=true; statusEl.textContent="scouting…";
   const q=new URLSearchParams({category:$("#category").value||"trades", area:$("#area").value, limit:$("#limit").value||25});
   es=new EventSource("/scout?"+q);
-  es.addEventListener("log", e=>log(JSON.parse(e.data).msg));
+  es.addEventListener("log", e=>{ const d=JSON.parse(e.data); log(d.msg, d.kind||"plain"); });
   es.addEventListener("stats", e=>renderFunnel(JSON.parse(e.data)));
   es.addEventListener("opportunity", e=>{ const o=JSON.parse(e.data); opportunities.push(o); renderCard(o); });
   es.addEventListener("done", e=>{ es.close(); scoutBtn.disabled=false; const d=JSON.parse(e.data);
     const tput=`${d.throughput} sites/s · ${d.elapsed}s`;
     renderFunnel({scanned:d.scanned, with_site:d.graded, dated:opportunities.length, opportunities:d.count}, tput);
     statusEl.textContent=`${d.count} opportunities · ${d.elapsed}s · ${d.throughput} sites/s`;
-    log(`done — ${d.count} opportunities · scanned ${d.scanned} · graded ${d.graded} @ ${d.throughput}/s · ${d.elapsed}s`); });
-  es.onerror=()=>{ log("stream error / ended","err"); es.close(); scoutBtn.disabled=false; statusEl.textContent=""; };
+    log(`done — ${d.count} opportunities · scanned ${d.scanned} · graded ${d.graded} @ ${d.throughput}/s · ${d.elapsed}s`, "stat"); });
+  es.onerror=()=>{ log("stream ended","tierfail"); es.close(); scoutBtn.disabled=false; statusEl.textContent=""; };
 });
 
 $("#export").addEventListener("click", ()=>{

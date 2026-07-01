@@ -9,10 +9,12 @@ Backend is stdlib only (http.server) — runs with just `pip install pith[js]`. 
 no mocks. Run:  python examples/scout/server.py  then open http://localhost:8848
 """
 import json
+import logging
+import queue
 import re
 import sys
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse, parse_qs
@@ -47,8 +49,9 @@ BUNDLES = {
 }
 
 _GRADE_RANK = {"F": 0, "D": 1, "C": 2, "B": 3, "A": 4, "?": 5}
-GRADE_WORKERS = 20          # I/O-bound + slow dated hosts hold a worker on the full timeout; more absorbs the tail
-DIG_WORKERS = 12            # find_contact crawls multiple pages per site (heavier); dig every survivor at once
+GRADE_WORKERS = 16          # flat curl_cffi fetches; stable to ~20. I/O-bound, absorbs slow-host tail
+DIG_WORKERS = 6             # find_contact nests its own Extractor pool — keep OUTER×INNER bounded (see _dig)
+DIG_INNER = 2               # Extractor concurrency inside each find_contact; 6×2=12 total native fetches (safe)
 PER_CAT = 18                # ~1 directory page/source per category — fast, still ~120 businesses across a bundle
 
 # per-category "platform play" for the MULTIPLY starter (HFL's real pitch: not a $2k site)
@@ -60,6 +63,49 @@ _PLAYS = {
     "law firm": "intake automation + client portal", "real estate agent": "IDX listing site + lead capture",
     "auto repair": "online appointment booking + service reminders",
 }
+
+
+# ---- live observability: stream pith's own internal trace into the SSE log ----------------
+def _short_url(u: str) -> str:
+    try:
+        p = urlparse(u or "")
+        path = p.path if p.path and p.path != "/" else ""
+        return (p.netloc + path)[:46]
+    except Exception:
+        return (u or "")[:46]
+
+
+def _kb(n) -> str:
+    return f"{round((n or 0) / 1024)}KB" if n else "?"
+
+
+def _drain(q: "queue.Queue"):
+    """Yield everything queued so far (pith trace records pushed from worker threads)."""
+    try:
+        while True:
+            yield q.get_nowait()
+    except queue.Empty:
+        pass
+
+
+class _SSEHandler(logging.Handler):
+    """Turns pith's structured log records (tier / tier_fail, emitted per page fetch inside
+    the Extractor) into readable SSE log lines. Thread-safe via a queue the generator drains."""
+    def __init__(self, q: "queue.Queue"):
+        super().__init__(level=logging.DEBUG)
+        self.q = q
+
+    def emit(self, r: logging.LogRecord):
+        try:
+            ev, d = r.getMessage(), r.__dict__
+            if ev == "tier":
+                self.q.put(("log", {"kind": "tier",
+                    "msg": f"      → {_short_url(d.get('url'))}  [{d.get('tier')} {d.get('ms')}ms {_kb(d.get('bytes'))}]"}))
+            elif ev == "tier_fail":
+                self.q.put(("log", {"kind": "tierfail",
+                    "msg": f"      → {_short_url(d.get('url'))}  [{d.get('tier')} failed: {str(d.get('err',''))[:38]}]"}))
+        except Exception:
+            pass
 
 
 def expand(category: str) -> list[str]:
@@ -101,19 +147,22 @@ def _grade(b: dict):
     """Business -> (business, intel) or None. Fast-fetch (8s cap) + tech analysis only; WHOIS
     domain-age is deferred to the dig phase so it runs for ~18 survivors, not all 31 sites."""
     url = b["website"]
-    html = ""
+    html, tier = "", None
     try:
         from curl_cffi import requests as creq
         html = creq.get(url, impersonate="chrome", timeout=GRADE_TIMEOUT).text
+        tier = "impersonate"
     except Exception:
         try:
             html = _fetch_static(url)          # fallback if curl_cffi/impersonate unavailable
+            tier = "static"
         except Exception:
             return None
     if not html:
         return None
     intel = analyze(html, url)
     intel["grade"] = intel.get("modernness_grade")
+    intel["_tier"], intel["_bytes"] = tier, len(html)
     return b, intel
 
 
@@ -121,7 +170,7 @@ def _dig(b: dict, intel: dict):
     """Worker-thread dig: owner contact + WHOIS domain-age together, so both run concurrently
     across the pool (NOT serialized in the SSE yield loop)."""
     try:
-        contact = find_contact(b["website"])
+        contact = find_contact(b["website"], workers=DIG_INNER)   # bound nested concurrency (native fetch libs)
     except Exception:
         return None
     intel = {**intel, "domain_age_years": _domain_age_years(_registrable(b["website"]))}
@@ -221,42 +270,88 @@ def scout_events(category, area, limit):
         yield "done", {"count": 0, "elapsed": round(time.time() - t0, 1), "scanned": len(businesses), "graded": 0, "throughput": 0}
         return
 
-    yield "log", {"msg": f"grading {len(sites)} sites concurrently ({GRADE_WORKERS}× pith tiered fetch)…"}
-    tg = time.time()
-    kept, graded = [], 0
-    with ThreadPoolExecutor(max_workers=GRADE_WORKERS) as pool:
-        futs = {pool.submit(_grade, b): b for b in sites}
-        for fut in as_completed(futs):
-            graded += 1
-            res = fut.result()
-            if res is None:
-                continue
-            b, intel = res
-            g = intel["grade"]
-            yield "log", {"msg": f"  [{graded}/{len(sites)}] {b['name'][:34]}: {g} · {intel.get('builder')}"}
-            if _GRADE_RANK.get(g, 5) <= _GRADE_RANK["C"]:
-                kept.append((b, intel))
-    dt = time.time() - tg
-    rate = len(sites) / dt if dt > 0 else 0
-    yield "stats", {"scanned": len(businesses), "with_site": len(sites), "dated": len(kept), "opportunities": 0}
-    yield "log", {"msg": f"⚡ graded {len(sites)} sites in {dt:.1f}s ({rate:.1f}/s) — {len(kept)} dated (C/D/F)"}
+    q = queue.Queue()                                  # pith trace records land here (worker threads)
+    lg = logging.getLogger("pith")
+    handler = _SSEHandler(q)
+    prev_level = lg.level
+    lg.setLevel(logging.DEBUG)
+    lg.addHandler(handler)
+    rate = 0
+    try:
+        # ---- grade: concurrent, richer per-site line ----
+        yield "log", {"msg": f"grading {len(sites)} sites concurrently ({GRADE_WORKERS}× pith tiered fetch)…", "kind": "phase"}
+        tg = time.time()
+        kept, graded = [], 0
+        with ThreadPoolExecutor(max_workers=GRADE_WORKERS) as pool:
+            futs = {pool.submit(_grade, b): b for b in sites}
+            pending = set(futs)
+            while pending:
+                yield from _drain(q)
+                for f in [x for x in pending if x.done()]:
+                    pending.discard(f)
+                    graded += 1
+                    res = f.result()
+                    if res is None:
+                        continue
+                    b, intel = res
+                    g = intel["grade"]
+                    ds = intel.get("dated_signals") or []
+                    line = (f"  [{graded}/{len(sites)}] {b['name'][:30]}: {g} · {intel.get('builder')} · "
+                            f"resp:{'Y' if intel.get('responsive') else 'N'} https:{'Y' if intel.get('https') else 'N'} "
+                            f"[{intel.get('_tier')} {_kb(intel.get('_bytes'))}]")
+                    if ds:
+                        line += f" · dated:{','.join(ds[:3])}"
+                    yield "log", {"msg": line, "kind": "grade"}
+                    if _GRADE_RANK.get(g, 5) <= _GRADE_RANK["C"]:
+                        kept.append((b, intel))
+                if pending:
+                    try:
+                        yield q.get(timeout=0.15)      # block briefly so trace streams live
+                    except queue.Empty:
+                        pass
+        yield from _drain(q)
+        dt = time.time() - tg
+        rate = len(sites) / dt if dt > 0 else 0
+        yield "stats", {"scanned": len(businesses), "with_site": len(sites), "dated": len(kept), "opportunities": 0}
+        yield "log", {"msg": f"graded {len(sites)} sites in {dt:.1f}s ({rate:.1f}/s) — {len(kept)} dated (C/D/F)", "kind": "stat"}
 
-    kept.sort(key=lambda bi: _GRADE_RANK.get(bi[1]["grade"], 5))    # worst sites (best leads) first
-    kept = kept[:limit]
-    yield "log", {"msg": f"digging owner contact for {len(kept)} targets concurrently ({DIG_WORKERS}×)…"}
-    found = 0
-    with ThreadPoolExecutor(max_workers=DIG_WORKERS) as pool:
-        futs = [pool.submit(_dig, b, intel) for b, intel in kept]
-        for fut in as_completed(futs):
-            res = fut.result()
-            if res is None:
-                continue
-            b, intel, contact = res
-            opp = build_opportunity(b, intel, contact)
-            found += 1
-            yield "opportunity", opp
-            yield "stats", {"scanned": len(businesses), "with_site": len(sites), "dated": len(kept), "opportunities": found}
-            yield "log", {"msg": f"  ★ #{found} {b['name'][:30]} (grade {intel['grade']}, score {opp['score']})"}
+        kept.sort(key=lambda bi: _GRADE_RANK.get(bi[1]["grade"], 5))    # worst sites (best leads) first
+        kept = kept[:limit]
+
+        # ---- dig: concurrent; pith's per-page fetch trace streams under each site ----
+        yield "log", {"msg": f"digging owner contact for {len(kept)} targets concurrently ({DIG_WORKERS}×) — crawling each site's key pages…", "kind": "phase"}
+        found = 0
+        with ThreadPoolExecutor(max_workers=DIG_WORKERS) as pool:
+            futs = [pool.submit(_dig, b, intel) for b, intel in kept]
+            pending = set(futs)
+            while pending:
+                yield from _drain(q)
+                for f in [x for x in pending if x.done()]:
+                    pending.discard(f)
+                    res = f.result()
+                    if res is None:
+                        continue
+                    b, intel, contact = res
+                    opp = build_opportunity(b, intel, contact)
+                    found += 1
+                    yield "opportunity", opp
+                    yield "stats", {"scanned": len(businesses), "with_site": len(sites), "dated": len(kept), "opportunities": found}
+                    owner = "owner-operator" if any(e["type"] == "owner" for e in contact["emails"]) else "no owner email"
+                    yield "log", {"kind": "hit", "msg":
+                        (f"  #{found} {b['name'][:26]}: crawled {contact['pages']}pg → "
+                         f"{len(contact['emails'])} email, {len(contact['phones'])} phone, "
+                         f"{len(contact['socials'])} social, {len(contact.get('people', []))} person · "
+                         f"{owner} · {intel.get('domain_age_years') or '?'}yr · score {opp['score']}")}
+                if pending:
+                    try:
+                        yield q.get(timeout=0.15)
+                    except queue.Empty:
+                        pass
+        yield from _drain(q)
+    finally:
+        lg.removeHandler(handler)
+        lg.setLevel(prev_level)
+
     total = time.time() - t0
     yield "done", {"count": found, "elapsed": round(total, 1), "scanned": len(businesses),
                    "graded": len(sites), "throughput": round(rate, 1)}
