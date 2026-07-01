@@ -128,11 +128,15 @@ def emails(text: str) -> list[str]:
 
 def _canon_phone(p: str):
     """Canonicalize a NANP number to one form so the same phone doesn't appear 5 ways.
-    Returns '(xxx) xxx-xxxx' for a valid 10-digit NANP; None otherwise (kept as-is)."""
+    Returns '(xxx) xxx-xxxx' for a valid 10-digit NANP, '' for a recognized placeholder to
+    DROP (area code 555 — not an assignable NANP NPA, so it's fiction/template junk like
+    (555) 555-5555), or None for a non-NANP string (kept as-is; could be international)."""
     d = re.sub(r"\D", "", p)
     if len(d) == 11 and d[0] == "1":
         d = d[1:]
     if len(d) == 10 and d[0] not in "01" and d[3] not in "01":  # valid NANP area/exchange
+        if d[:3] == "555":                                      # 555 is not a real area code
+            return ""
         return f"({d[:3]}) {d[3:6]}-{d[6:]}"
     return None
 
@@ -140,11 +144,18 @@ def _canon_phone(p: str):
 def phones(text: str) -> list[str]:
     """`tel:` links plus formatted NANP numbers (separators required, so tracking-ID digit
     runs don't match). Normalizes invisibles/unicode first; canonicalizes + dedups NANP so
-    one phone appears once."""
+    one phone appears once. Recognized placeholders (555 area code) are dropped."""
     text = _clean(text)
     raw = {re.sub(r"\s+", " ", t).strip() for t in _TEL.findall(text)}
     raw |= {re.sub(r"\s+", " ", p).strip() for p in _PHONE_FMT.findall(text)}
-    return sorted({_canon_phone(p) or p for p in raw})
+    out = set()
+    for p in raw:
+        c = _canon_phone(p)
+        if c is None:            # non-NANP — keep raw (intl, extensions, etc.)
+            out.add(p)
+        elif c:                  # valid canonical; '' = recognized junk, dropped
+            out.add(c)
+    return sorted(out)
 
 
 def _is_profile(url: str) -> bool:

@@ -1,0 +1,207 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SCOUT — outdated-site prospecting</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700;800&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#0a0e0a; --panel:#0d120d; --panel2:#111811; --line:#1f2a1f;
+    --green:#3fb950; --amber:#d29922; --red:#f85149; --dim:#6e7681; --fg:#c9d1c9;
+  }
+  *{box-sizing:border-box}
+  body{
+    margin:0; background:var(--bg); color:var(--fg);
+    font-family:"JetBrains Mono",monospace; font-size:13px; line-height:1.5;
+  }
+  a{color:#5b9bd5; text-decoration:none} a:hover{text-decoration:underline}
+  header{
+    padding:18px 22px; border-bottom:1px solid var(--line);
+    background:
+      repeating-linear-gradient(90deg,transparent,transparent 3px,rgba(63,185,80,.03) 3px,rgba(63,185,80,.03) 4px),
+      var(--panel);
+    display:flex; align-items:baseline; gap:16px; flex-wrap:wrap;
+  }
+  header h1{margin:0; font-size:26px; font-weight:800; letter-spacing:4px; color:var(--green)}
+  header .sub{color:var(--dim); letter-spacing:1px}
+  header .spacer{flex:1}
+  .controls{display:flex; gap:10px; align-items:center; padding:14px 22px; border-bottom:1px solid var(--line); flex-wrap:wrap}
+  .funnel{display:flex; align-items:center; gap:8px; padding:8px 22px; border-bottom:1px solid var(--line); flex-wrap:wrap; min-height:34px}
+  .fseg{font-size:12px; color:var(--dim)} .fseg b{color:var(--fg); font-size:15px; margin-right:2px}
+  .fseg.hot b{color:var(--green)} .farrow{color:var(--line)}
+  .tput{color:var(--amber); margin-left:auto; font-weight:700}
+  label{color:var(--dim); text-transform:uppercase; letter-spacing:1px; font-size:11px}
+  select,input{
+    background:var(--panel2); color:var(--fg); border:1px solid var(--line);
+    padding:7px 9px; font-family:inherit; font-size:13px; border-radius:3px;
+  }
+  input#category{width:150px} input#limit{width:64px}
+  select:focus,input:focus{outline:none; border-color:var(--green)}
+  button{
+    background:transparent; color:var(--green); border:1px solid var(--green);
+    padding:7px 16px; font-family:inherit; font-weight:700; text-transform:uppercase;
+    letter-spacing:2px; cursor:pointer; border-radius:3px; font-size:12px;
+  }
+  button:hover{background:var(--green); color:#04120a}
+  button:disabled{opacity:.4; cursor:not-allowed; background:transparent; color:var(--dim); border-color:var(--line)}
+  button.ghost{color:var(--amber); border-color:var(--amber)}
+  button.ghost:hover{background:var(--amber); color:#1a1200}
+  button.small{padding:4px 10px; font-size:11px; letter-spacing:1px}
+  main{display:grid; grid-template-columns:1.9fr 1fr; gap:0; height:calc(100vh - 118px)}
+  #cards{overflow-y:auto; padding:16px; display:flex; flex-direction:column; gap:14px}
+  #logwrap{border-left:1px solid var(--line); background:#070a07; display:flex; flex-direction:column}
+  #logwrap .lh{padding:8px 14px; border-bottom:1px solid var(--line); color:var(--dim); text-transform:uppercase; letter-spacing:2px; font-size:11px}
+  #log{flex:1; overflow-y:auto; padding:10px 14px; font-size:12px; color:#7fdf8f; white-space:pre-wrap; word-break:break-word}
+  #log .err{color:var(--red)} #log .hit{color:var(--amber)}
+  .cursor{display:inline-block; width:8px; height:14px; background:var(--green); animation:blink 1s steps(1) infinite; vertical-align:middle}
+  @keyframes blink{50%{opacity:0}}
+  .empty{color:var(--dim); padding:40px; text-align:center; border:1px dashed var(--line); border-radius:4px}
+  .card{flex:none; border:1px solid var(--line); background:var(--panel); border-radius:4px; box-shadow:0 2px 0 #060906; overflow:hidden}
+  .card .top{display:flex; align-items:center; gap:12px; padding:12px 14px; border-bottom:1px solid var(--line)}
+  .grade{width:34px; height:34px; display:flex; align-items:center; justify-content:center; font-weight:800; font-size:18px; border-radius:3px; flex:none}
+  .g-F,.g-D{background:var(--red); color:#1a0000} .g-C{background:var(--amber); color:#1a1200} .g-A,.g-B{background:var(--green); color:#04120a} .g-\?{background:var(--line); color:var(--dim)}
+  .card .name{font-weight:700; font-size:15px; color:#eafbea}
+  .card .score{margin-left:auto; color:var(--dim); font-size:11px}
+  .card .body{padding:12px 14px; display:flex; flex-direction:column; gap:9px}
+  .meta{color:var(--dim); font-size:12px}
+  .block .bh{color:var(--dim); text-transform:uppercase; letter-spacing:1px; font-size:10px; margin-bottom:3px}
+  .badge{font-size:10px; padding:1px 6px; border-radius:2px; background:var(--panel2); border:1px solid var(--line); color:var(--dim); text-transform:uppercase; letter-spacing:.5px}
+  .badge.owner{color:var(--green); border-color:var(--green)}
+  .row{display:flex; gap:8px; align-items:center; flex-wrap:wrap}
+  .starter{padding:3px 0}
+  .s-RUIN{color:#ff8a80} .s-ROUTE{color:var(--green)} .s-MULTIPLY{color:var(--amber)} .s-CONTEXT{color:var(--dim)}
+  .deep{margin-top:6px; border-top:1px dashed var(--line); padding-top:9px}
+  .prof{display:flex; gap:8px; align-items:center; font-size:12px; padding:1px 0}
+  .conf{color:var(--green); font-weight:700}
+  .kchip{font-size:9px; padding:0 4px; border-radius:2px; background:var(--panel2); border:1px solid var(--line); color:var(--dim)}
+</style>
+</head>
+<body>
+<header>
+  <h1>SCOUT</h1>
+  <span class="sub">outdated-site prospecting // powered by pith</span>
+  <span class="spacer"></span>
+  <button class="ghost small" id="export">Export JSON</button>
+</header>
+
+<div class="controls">
+  <label>area</label><select id="area"></select>
+  <label>bundle</label><select id="bundle"></select>
+  <label>or category</label><input id="category" placeholder="trades" value="trades">
+  <label>count</label><input id="limit" type="number" value="25" min="1" max="50">
+  <button id="scout">Scout</button>
+  <span id="status" class="meta"></span>
+</div>
+<div id="funnel" class="funnel"><span class="fseg meta">pith funnel — appears live during a sweep</span></div>
+
+<main>
+  <div id="cards"><div class="empty">pick an area + category, hit SCOUT.<br>pith builds the list, grades sites, digs owner contact — live.</div></div>
+  <div id="logwrap">
+    <div class="lh">// live — pith backend</div>
+    <div id="log"><span class="cursor"></span></div>
+  </div>
+</main>
+
+<script>
+const $ = s => document.querySelector(s);
+const esc = s => String(s==null?"":s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const cardsEl=$("#cards"), logEl=$("#log"), scoutBtn=$("#scout"), statusEl=$("#status");
+let opportunities=[], es=null;
+
+function log(msg, cls){
+  const line=document.createElement("div");
+  if(cls) line.className=cls;
+  line.textContent=msg;
+  logEl.insertBefore(line, logEl.lastChild);          // keep cursor last
+  logEl.scrollTop=logEl.scrollHeight;
+}
+
+fetch("/areas").then(r=>r.json()).then(d=>{
+  $("#area").innerHTML=d.areas.map(a=>`<option>${esc(a)}</option>`).join("");
+  $("#bundle").innerHTML='<option value="">— preset —</option>'+d.bundles.map(b=>`<option>${esc(b)}</option>`).join("");
+}).catch(()=>log("could not load areas","err"));
+$("#bundle").addEventListener("change", e=>{ if(e.target.value) $("#category").value=e.target.value; });
+
+function renderFunnel(s, tput){
+  const segs=[["scanned",s.scanned],["with site",s.with_site],["dated",s.dated],["opportunities",s.opportunities]];
+  $("#funnel").innerHTML=segs.map(([k,v],i)=>`<span class="fseg${i===3?' hot':''}"><b>${v}</b>${esc(k)}</span>`).join('<span class="farrow">→</span>')
+    + (tput?`<span class="tput">⚡ ${esc(tput)}</span>`:"");
+}
+
+function gradeClass(g){ return "g-"+(g||"?"); }
+
+function renderCard(o){
+  const el=document.createElement("div"); el.className="card"; el.dataset.score=o.score;
+  const people=(o.owner.people||[]).map(p=>esc(p.name)+(p.title?` — ${esc(p.title)}`:"")).join(", ");
+  const emails=(o.owner.emails||[]).map(e=>`<span class="row"><span class="badge ${e.type==='owner'?'owner':''}">${esc(e.type)}</span> ${esc(e.email)}</span>`).join("");
+  const phones=(o.owner.phones||[]).map(p=>`${esc(p.number)} <span class="meta">(${p.sources} src)</span>`).join(" · ");
+  const socials=(o.owner.socials||[]).map(s=>`<a href="${esc(s)}" target="_blank">${esc(s.replace(/^https?:\/\/(www\.)?/,''))}</a>`).join(" · ");
+  const starters=(o.conversation_starters||[]).map(s=>{
+    const tag=(s.split(":")[0]||"").trim();
+    return `<div class="starter s-${esc(tag)}">${esc(s)}</div>`;
+  }).join("");
+  el.innerHTML=`
+    <div class="top">
+      <div class="grade ${gradeClass(o.grade)}">${esc(o.grade)}</div>
+      <div><div class="name">${esc(o.name)}${o.category?` <span class="badge">${esc(o.category)}</span>`:""}</div>
+        <div class="meta"><a href="${esc(o.website)}" target="_blank">${esc(o.website)}</a>${o.address?" · "+esc(o.address):""}</div></div>
+      <div class="score">score ${o.score}</div>
+    </div>
+    <div class="body">
+      <div class="meta">${esc(o.builder||"?")}${o.hosted_builder?" (hosted)":""} · ${o.domain_age_years?o.domain_age_years+"yr":"?"} · responsive:${o.responsive?"yes":"NO"}</div>
+      ${people?`<div class="block"><div class="bh">owner</div><div>${people}</div></div>`:""}
+      ${emails?`<div class="block"><div class="bh">emails</div>${emails}</div>`:""}
+      ${phones?`<div class="block"><div class="bh">phones</div><div>${phones}</div></div>`:""}
+      ${socials?`<div class="block"><div class="bh">socials</div><div class="row">${socials}</div></div>`:""}
+      <div class="block"><div class="bh">conversation starters</div>${starters}</div>
+      <div class="row"><button class="ghost small deepbtn">Deep Scan</button></div>
+      <div class="deep" style="display:none"></div>
+    </div>`;
+  el.querySelector(".deepbtn").addEventListener("click", ()=>deepScan(o.website, el));
+  // insert keeping score descending
+  const others=[...cardsEl.querySelectorAll(".card")];
+  const after=others.find(c=>Number(c.dataset.score)<o.score);
+  cardsEl.insertBefore(el, after||null);
+}
+
+function deepScan(website, cardEl){
+  const box=cardEl.querySelector(".deep"), btn=cardEl.querySelector(".deepbtn");
+  box.style.display="block"; box.innerHTML='<div class="meta">scanning public profiles…</div>'; btn.disabled=true;
+  const d=new EventSource("/deep?website="+encodeURIComponent(website));
+  d.addEventListener("log",e=>log("  "+JSON.parse(e.data).msg));
+  d.addEventListener("done",e=>{
+    const p=JSON.parse(e.data).person; d.close(); btn.disabled=false;
+    if(!p||!p.profiles||!p.profiles.length){ box.innerHTML='<div class="meta">no verified profiles</div>'; return; }
+    const rows=p.profiles.map(pr=>`<div class="prof"><span class="kchip">${esc(pr.kind)}</span><a href="${esc(pr.url)}" target="_blank">${esc(pr.site)}</a> <span class="conf">${Math.round(pr.confidence*100)}%</span> <span class="meta">${esc((pr.signals||[]).join("+"))}</span></div>`).join("");
+    box.innerHTML=`<div class="bh">verified profiles · confidence ${Math.round(p.confidence*100)}%</div>${rows}<div class="meta">best channels: ${esc((p.best_channels||[]).join(", "))}</div>`;
+  });
+  d.onerror=()=>{ d.close(); btn.disabled=false; box.innerHTML='<div class="meta">deep scan failed</div>'; };
+}
+
+scoutBtn.addEventListener("click", ()=>{
+  if(es) es.close();
+  opportunities=[]; cardsEl.innerHTML=""; logEl.innerHTML='<span class="cursor"></span>'; $("#funnel").innerHTML="";
+  scoutBtn.disabled=true; statusEl.textContent="scouting…";
+  const q=new URLSearchParams({category:$("#category").value||"trades", area:$("#area").value, limit:$("#limit").value||25});
+  es=new EventSource("/scout?"+q);
+  es.addEventListener("log", e=>log(JSON.parse(e.data).msg));
+  es.addEventListener("stats", e=>renderFunnel(JSON.parse(e.data)));
+  es.addEventListener("opportunity", e=>{ const o=JSON.parse(e.data); opportunities.push(o); renderCard(o); });
+  es.addEventListener("done", e=>{ es.close(); scoutBtn.disabled=false; const d=JSON.parse(e.data);
+    const tput=`${d.throughput} sites/s · ${d.elapsed}s`;
+    renderFunnel({scanned:d.scanned, with_site:d.graded, dated:opportunities.length, opportunities:d.count}, tput);
+    statusEl.textContent=`${d.count} opportunities · ${d.elapsed}s · ${d.throughput} sites/s`;
+    log(`done — ${d.count} opportunities · scanned ${d.scanned} · graded ${d.graded} @ ${d.throughput}/s · ${d.elapsed}s`); });
+  es.onerror=()=>{ log("stream error / ended","err"); es.close(); scoutBtn.disabled=false; statusEl.textContent=""; };
+});
+
+$("#export").addEventListener("click", ()=>{
+  const blob=new Blob([JSON.stringify(opportunities,null,2)],{type:"application/json"});
+  const a=document.createElement("a"); a.href=URL.createObjectURL(blob); a.download="scout.json"; a.click();
+});
+</script>
+</body>
+</html>
