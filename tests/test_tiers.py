@@ -27,6 +27,49 @@ def test_looks_thin_boundary():
     assert not _looks_thin("x" * 200)
 
 
+def test_thin_escalates_only_when_raw_html_is_big(monkeypatch):
+    """Fix: a tiny real page (small raw HTML) must NOT waste ~3s escalating to the browser;
+    a JS shell (big raw HTML, thin extract) still must."""
+    from pith.core import Extractor
+    calls = {"browser": 0}
+    ex = Extractor()
+    monkeypatch.setattr(Extractor, "_browser_markdown",
+                        lambda self, url, attempts=2: calls.__setitem__("browser", calls["browser"] + 1) or "BROWSERED")
+
+    monkeypatch.setattr(Extractor, "_cheap_markdown", lambda self, url: ("tiny", 559))   # small page
+    meta, body = ex._to_markdown("https://example.com", "auto")
+    assert body == "tiny" and calls["browser"] == 0                                       # did NOT escalate
+
+    monkeypatch.setattr(Extractor, "_cheap_markdown", lambda self, url: ("", 50000))       # JS shell
+    ex._to_markdown("https://spa.example", "auto")
+    assert calls["browser"] == 1                                                           # DID escalate
+
+
+def test_run_batch_caps_browser_concurrency(monkeypatch):
+    """Fix: --workers on a list containing a walled URL is capped so it can't spawn N browsers."""
+    from pith import cli
+    seen = {}
+
+    class _Ex:
+        def extract(self, urls, **kw):
+            from pith.core import ExtractResult, Result
+            return ExtractResult(results=[Result(url=urls[0], excerpts=["x"])])
+
+    def fake_pool(max_workers):
+        seen["workers"] = max_workers
+        return __import__("concurrent.futures", fromlist=["ThreadPoolExecutor"]).ThreadPoolExecutor(max_workers)
+    monkeypatch.setattr(cli, "ThreadPoolExecutor", fake_pool)
+
+    walled = [("a", "https://reddit.com/r/x"), ("b", "https://example.com")]
+    cli.run_batch(_Ex(), walled, objective=None, full=False, render_js="auto", workers=16)
+    assert seen["workers"] == cli._BROWSER_MAX_CONCURRENCY   # capped from 16
+
+    seen.clear()
+    cheap = [("a", "https://example.com"), ("b", "https://foo.com")]
+    cli.run_batch(_Ex(), cheap, objective=None, full=False, render_js="auto", workers=16)
+    assert seen["workers"] == 16                             # no wall -> uncapped
+
+
 def test_jsonfmt_emits_event_plus_extra():
     """Trace mode: each record -> one JSON object, message=event, extra= fields ride along."""
     import json, logging

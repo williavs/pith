@@ -16,7 +16,7 @@ import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict
 
-from .core import Extractor, Result
+from .core import Extractor, Result, _needs_browser, _BROWSER_MAX_CONCURRENCY
 
 log = logging.getLogger("pith")
 
@@ -151,6 +151,11 @@ def run_batch(ex, targets, *, objective, full, render_js, workers, verbose=False
     """Drive the extractor over targets, one extract() per URL so we can show progress
     and parallelize. Returns (label, url, Result | error-dict) rows in input order."""
     total = len(targets)
+    # tier-safety: a walled URL spawns a stealth browser (~hundreds of MB). If any target is
+    # walled, cap concurrency so a big --workers can't OOM the box (browser knee is ~3 anyway,
+    # measured in walled-physics.md). Pure open-web batches keep full --workers.
+    if workers > _BROWSER_MAX_CONCURRENCY and any(_needs_browser(u) for _, u in targets):
+        workers = _BROWSER_MAX_CONCURRENCY
     log.info("batch_start", extra={"n": total, "workers": workers})
 
     def one(item):

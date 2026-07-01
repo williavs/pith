@@ -154,6 +154,11 @@ def _looks_thin(markdown: Optional[str]) -> bool:
 # not the real page — worth one more attempt. Genuinely small pages just stay small.
 _WALL_RETRY_THRESHOLD = 1000
 
+# Thin extraction escalates to the browser only if the raw HTML was at least this big — big
+# HTML + thin markdown = JS shell (fetch it in a browser); small HTML + thin = a real tiny
+# page (don't waste ~3s). example.com is 559B raw; SPA shells ship several KB.
+_JS_SHELL_MIN_HTML = 3000
+
 # Each stealth-browser fetch spins up a patchright/Chromium instance (hundreds of MB). The cheap
 # tiers (HTTP/impersonation) are light and scale wide, but browser fetches must stay
 # bounded or a big list OOMs the box. ponytail: 3 is safe on 16GB; bump if you have RAM.
@@ -269,35 +274,45 @@ class Extractor:
         if use_browser:
             md = self._browser_markdown(url)
         else:
-            md = self._cheap_markdown(url)  # plain HTTP, then TLS-impersonation if that 403s/thins
-            if render_js == "auto" and _looks_thin(md):
-                md = self._browser_markdown(url)  # still thin → it's a JS-rendered shell
+            md, raw = self._cheap_markdown(url)  # plain HTTP, then TLS-impersonation if that 403s/thins
+            # Escalate to the browser only when extraction was thin BUT the raw HTML was
+            # substantial — the JS-shell signature. A genuinely tiny page (small raw HTML)
+            # is just small; the browser can't add what isn't there, so skip the ~3s.
+            # ponytail: raw-size proxy; a rare <3KB shell won't escalate. Upgrade = sniff for
+            # a script-heavy near-empty body.
+            if render_js == "auto" and _looks_thin(md) and raw >= _JS_SHELL_MIN_HTML:
+                md = self._browser_markdown(url)
         if not md:
             raise RuntimeError("no extractable content")
         return _split_frontmatter(md)
 
-    def _cheap_markdown(self, url: str) -> str:
+    def _cheap_markdown(self, url: str) -> tuple[str, int]:
         """No-browser tiers: plain HTTP, then browser-TLS impersonation if that fails or
-        comes up thin. Both are fast (~hundreds of ms). Returns best markdown seen ('' if
-        both fail). Impersonation rescues sites that 403 plain urllib (WSJ et al.)."""
-        md = ""
+        comes up thin. Both are fast (~hundreds of ms). Returns (best markdown, largest raw
+        HTML seen) — the raw size lets the caller tell a JS shell (big HTML, thin extract)
+        from a genuinely tiny page (small HTML). Impersonation rescues 403s (WSJ et al.)."""
+        md, raw = "", 0
         t = perf_counter()
         try:
-            md = _extract_md(_fetch_static(url))
+            html = _fetch_static(url)
+            raw = len(html)
+            md = _extract_md(html)
         except Exception as e:
             log.debug("tier_fail", extra={"url": url, "tier": "static", "err": str(e)[:80]})
         if not _looks_thin(md):
             log.debug("tier", extra={"url": url, "tier": "static", "ms": _ms(t), "bytes": len(md)})
-            return md
+            return md, raw
         t = perf_counter()
         try:
-            imp = _extract_md(_fetch_impersonate(url))
+            html = _fetch_impersonate(url)
+            raw = max(raw, len(html))
+            imp = _extract_md(html)
             if len(imp) > len(md):
                 md = imp
             log.debug("tier", extra={"url": url, "tier": "impersonate", "ms": _ms(t), "bytes": len(md)})
         except Exception as e:
             log.debug("tier_fail", extra={"url": url, "tier": "impersonate", "err": str(e)[:80]})
-        return md
+        return md, raw
 
     def _browser_markdown(self, url: str, attempts: int = 2) -> str:
         """Render in the stealth browser, retrying when the result looks like a transient
