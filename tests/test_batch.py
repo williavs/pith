@@ -51,6 +51,42 @@ def test_render_contact_json_and_empty():
     c = {"website": "x", "domain": "x.com", "pages": 0, "emails": [], "phones": [], "socials": [], "whois": {}}
     assert '"domain": "x.com"' in render_contact(c, "json")
     assert "(none found)" in render_contact(c, "table")
+
+
+def test_business_urls_filters_dedups_limits():
+    from pith.cli import _business_urls
+    results = [
+        {"url": "https://www.yelp.com/biz/acme"},   # aggregator -> drop
+        {"url": "https://acmehvac.com/"},           # keep
+        {"url": "https://acmehvac.com/contact"},    # dup domain -> drop
+        {"url": "https://www.facebook.com/acme"},   # social -> drop
+        {"url": "https://bobsplumbing.com/"},       # keep
+        {"url": ""},                                # empty -> drop
+        {"url": "https://coolair.com/"},            # keep
+    ]
+    assert _business_urls(results, 10) == ["https://acmehvac.com/", "https://bobsplumbing.com/", "https://coolair.com/"]
+    assert _business_urls(results, 1) == ["https://acmehvac.com/"]
+
+
+def test_searx_urls_requires_env(monkeypatch):
+    import pytest
+    from pith.cli import searx_urls
+    monkeypatch.delenv("PITH_SEARX_URL", raising=False)
+    with pytest.raises(SystemExit):
+        searx_urls("hvac ohio")
+
+
+def test_render_leads_csv_falls_back_to_phone():
+    from pith.cli import render_leads
+    leads = [
+        {"domain": "a.com", "emails": [{"email": "o@gmail.com", "type": "owner"}], "phones": ["555"], "socials": ["fb"]},
+        {"domain": "b.com", "emails": [], "phones": ["999"], "socials": []},   # no email -> phone
+        {"domain": "c.com", "emails": [], "phones": [], "socials": []},         # nothing
+    ]
+    out = render_leads(leads, "csv")
+    assert "business,best_contact,contact_type" in out.splitlines()[0]
+    assert "a.com,o@gmail.com,owner" in out
+    assert "b.com,999,phone" in out
 from pith.core import Result, ExtractResult
 
 

@@ -230,6 +230,79 @@ def render_contact(c: dict, fmt: str) -> str:
     return "\n".join(out)
 
 
+# directories/aggregators/social — not the business's own site; skip when prospecting.
+_AGGREGATORS = ("yelp.", "facebook.", "angi.", "angieslist.", "bbb.org", "yellowpages.",
+                "google.", "indeed.", "reddit.", "thumbtack.", "mapquest.", "linkedin.",
+                "instagram.", "houzz.", "nextdoor.", "glassdoor.", "tripadvisor.", "amazon.",
+                "wikipedia.", "youtube.", "pinterest.", "manta.", "chamberofcommerce.")
+
+
+def _business_urls(results, limit):
+    """From search results, keep one URL per real business domain (drop aggregators/dirs)."""
+    from urllib.parse import urlsplit
+    urls, seen = [], set()
+    for r in results:
+        u = (r.get("url") or "").strip()
+        dom = urlsplit(u).netloc.lower()
+        if not dom or dom in seen or any(a in dom for a in _AGGREGATORS):
+            continue
+        seen.add(dom)
+        urls.append(u)
+        if len(urls) >= limit:
+            break
+    return urls
+
+
+def searx_urls(query, limit=10):
+    """Search a SearXNG instance -> business homepage URLs. Instance from $PITH_SEARX_URL."""
+    import os
+    from urllib.parse import urlencode
+    base = os.environ.get("PITH_SEARX_URL")
+    if not base:
+        raise SystemExit("--prospect needs a SearXNG instance: set PITH_SEARX_URL=http://host:port")
+    url = base.rstrip("/") + "/search?" + urlencode({"q": query, "format": "json"})
+    data = json.load(urllib.request.urlopen(url, timeout=25))
+    return _business_urls(data.get("results", []), limit)
+
+
+def prospect(query, limit=10, workers=4):
+    """One category+geo search -> a lead list, each with dug owner contact. The GTM top of funnel."""
+    leads = []
+    for url in searx_urls(query, limit):
+        print(f"[prospect] {url}", file=sys.stderr, flush=True)
+        leads.append(find_contact(url, workers=workers))
+    return leads
+
+
+def _best_contact(lead):
+    if lead["emails"]:
+        return lead["emails"][0]["email"], lead["emails"][0]["type"]
+    if lead["phones"]:
+        return lead["phones"][0], "phone"
+    return "-", "-"
+
+
+def render_leads(leads, fmt):
+    if fmt == "json":
+        return json.dumps(leads, indent=2)
+    if fmt == "csv":
+        import csv as _csv
+        import io
+        buf = io.StringIO()
+        w = _csv.writer(buf)
+        w.writerow(["business", "best_contact", "contact_type", "phone", "socials"])
+        for l in leads:
+            best, typ = _best_contact(l)
+            w.writerow([l["domain"], best, typ, (l["phones"][0] if l["phones"] else ""), ";".join(l["socials"][:3])])
+        return buf.getvalue().rstrip()
+    out = [f"{'business':30} {'best contact':34} {'type':8} phone"]
+    for l in leads:
+        best, typ = _best_contact(l)
+        out.append(f"{l['domain'][:30]:30} {best[:34]:34} {typ:8} {l['phones'][0] if l['phones'] else '-'}")
+    out.append(f"\n{len(leads)} leads · {sum(1 for l in leads if l['emails'] or l['phones'])} with contact")
+    return "\n".join(out)
+
+
 def render_enrich(rows, fmt: str) -> str:
     if fmt == "json":
         return json.dumps(rows, indent=2)
@@ -374,6 +447,7 @@ def main() -> None:
     ap.add_argument("--crawl", metavar="URL", help="batch: from a homepage, follow links into about/contact/team/... sections")
     ap.add_argument("--match", metavar="SUBSTR", help="with --sitemap: keep only URLs containing this substring")
     ap.add_argument("--limit", type=int, default=25, help="cap pages gathered by --sitemap/--crawl (default 25)")
+    ap.add_argument("--prospect", metavar="QUERY", help="GTM: search a category+geo (needs $PITH_SEARX_URL) -> a lead list, each with dug owner contact")
     ap.add_argument("--find", metavar="URL", help="GTM: dig a business's public owner contact (ranked emails, phones, socials, WHOIS)")
     ap.add_argument("--enrich", metavar="FILE", help="GTM: read a company list (name,website csv) and output an enriched row per company (socials, emails, careers)")
     ap.add_argument("--about", metavar="QUERY", help="batch: rank candidates by relevance to this (e.g. a target name+company) and fetch the most relevant first")
@@ -389,6 +463,11 @@ def main() -> None:
         _enable_trace()
     render_js = True if args.js else "auto"
     ex = Extractor()
+
+    if args.prospect:  # GTM: search a category+geo -> lead list with owner contact
+        leads = prospect(args.prospect, limit=args.limit, workers=args.workers)
+        print(render_leads(leads, "table" if args.format == "md" else args.format))
+        return
 
     if args.find:  # GTM: dig one business's owner contact
         print(render_contact(find_contact(args.find, workers=args.workers),
