@@ -150,9 +150,15 @@ _ORG_TYPES = ("Organization", "Corporation", "LocalBusiness", "Store", "Restaura
 # a Person reached via one of these keys is a review/blog author or quoted third party — NOT
 # the business owner. Drop them (precision: a wrong person poisons outreach).
 _DROP_PARENT = frozenset({"author", "creator", "reviewer", "commenter", "contributor", "publisher"})
-# a Person reached via one of these keys IS an owner/staff of the org — keep.
+# a Person reached via one of these keys IS an owner/staff/subject of the page — keep.
+# mainentity/about are the canonical ProfilePage pattern: the subject Person of the page.
 _OWNER_PARENT = frozenset({"founder", "owner", "employee", "employees", "member", "members",
-                           "contactpoint", "manager", "founders", "director"})
+                           "contactpoint", "manager", "founders", "director",
+                           "mainentity", "about"})
+# an Organization reached via one of these keys is a third party (site publisher, ad sponsor,
+# product brand, grant funder) — NOT the business the page is about. Drop it.
+_DROP_ORG_PARENT = frozenset({"publisher", "sponsor", "brand", "funder", "provider",
+                              "author", "creator", "copyrightholder"})
 _KEEP = ("@type", "name", "jobTitle", "email", "telephone", "url", "sameAs", "worksFor", "address", "description")
 
 _META = [("og:title", "title"), ("og:description", "description"), ("og:site_name", "site"),
@@ -254,7 +260,10 @@ def structured(html: str) -> list[dict]:
                     continue
                 if pkey and pkey not in _OWNER_PARENT:  # nested under some non-owner key -> skip
                     continue
-            elif not is_org:
+            elif is_org:
+                if pkey in _DROP_ORG_PARENT:        # publisher/sponsor/brand -> third-party org, skip
+                    continue
+            else:
                 continue
             kept = {k: e[k] for k in _KEEP if k in e}
             key = json.dumps(kept, sort_keys=True, default=str)
@@ -341,10 +350,10 @@ def _email_syntax_ok(email: str) -> bool:
     """Unicode-aware syntax check for a KNOWN address (SMTPUTF8/IDN allowed) — distinct from
     the conservative ASCII `_EMAIL` extractor, which scans noisy body text. Accepts
     josé@example.com and 用户@例子.公司; rejects spaces, empty parts, dotless/short TLDs."""
-    if email.count("@") != 1:
+    if email.count("@") != 1 or len(email) > 254:          # RFC 5321 total length cap
         return False
     local, domain = email.split("@")
-    if not local or any(c.isspace() for c in local) or ".." in email:
+    if not local or len(local) > 64 or any(c.isspace() for c in local) or ".." in email:
         return False
     labels = domain.split(".")
     if len(labels) < 2 or any(not lb or any(c.isspace() for c in lb) for lb in labels):
@@ -386,19 +395,21 @@ def enrich(markdown: str, html: str) -> dict:
     html feeds structured/meta (needs the raw tags)."""
     src = (markdown or "") + "\n" + (html or "")
     st = structured(html)
-    tel = phones(html)
-    for e in st:  # fold schema.org telephones into phones
-        if e.get("telephone"):
-            tel.append(str(e["telephone"]))
+    tel = set(phones(html))
+    for e in st:  # fold schema.org telephones — through phones() so they canonicalize + dedup
+        t = e.get("telephone")
+        if isinstance(t, (str, int)):          # skip malformed dict/list telephone values
+            tel |= set(phones(str(t)))
     # emails: visible/entity + Cloudflare + bracketed at/dot + any in schema.org
     em = set(emails(src)) | set(cfemails(html)) | set(atdot_emails(src))
     for e in st:
-        if e.get("email"):
-            em |= set(emails(str(e["email"])))
+        v = e.get("email")
+        if isinstance(v, str):                 # skip non-string schema email values
+            em |= set(emails(v))
     em = {e for e in em if not _junk_email(e)}
     return {
         "emails": sorted(em),
-        "phones": sorted(set(tel)),
+        "phones": sorted(tel),
         "socials": socials(src),
         "addresses": addresses(html),
         "structured": st,

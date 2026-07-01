@@ -55,13 +55,16 @@ def score(target: Target, r) -> dict:
             same.add(str(e["url"]))
     page_domains = {_registrable(u) for u in same} | {em.split("@")[-1] for em in r.emails}
 
+    from .extract import _FREEMAIL
     signals = []
     if {_norm_url(u) for u in same} & {_norm_url(a) for a in target.anchors}:
         signals.append("BACKLINK")
-    if target.website and _registrable(target.website) in page_domains:
+    tw = _registrable(target.website) if target.website else ""
+    if tw and tw not in _FREEMAIL and tw in page_domains:   # a freemail domain isn't a company signal
         signals.append("COMPANY-DOMAIN")
-    toks = _name_toks(target.name)
-    if toks and owner and all(t in owner.lower() for t in toks):
+    # FULL-NAME: whole-token match, NOT substring — else "John Smith" matches "Johnathan Smithson"
+    toks, owner_toks = set(_name_toks(target.name)), set(_name_toks(owner))
+    if toks and owner_toks and toks <= owner_toks:
         signals.append("FULL-NAME")
     if (set(r.emails) & target.emails) or (set(r.phones) & target.phones):
         signals.append("SHARED-CONTACT")
@@ -93,7 +96,9 @@ def resolve_person(handle, target: Target, persona=None, all_sites=False, worker
     accepted = [h for h in hits if h["verdict"] == "ACCEPT"]
     rank = {"high": 0, "med": 1, "low": 2, "-": 3}
     channels = sorted(accepted, key=lambda h: (rank.get(h["value"], 3), not h.get("recency")))
-    overall = round(min(1.0, 0.4 + 0.15 * len(accepted)), 2) if accepted else 0.0
+    # Confidence in the IDENTITY = strength of the best-corroborated profile, NOT the count of
+    # accepts — many weakly-matched (possibly different) people must not read as high confidence.
+    overall = round(max((h["confidence"] for h in accepted), default=0.0), 2)
     return {"handle": handle, "confidence": overall,
             "profiles": sorted(accepted, key=lambda h: (-h["confidence"], h["site"])),
             "best_channels": [c["site"] for c in channels[:3]]}

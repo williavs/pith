@@ -95,9 +95,10 @@ def _directory(body):
 
 def _profiles(body):
     from .profiles import enumerate_profiles
-    hits = enumerate_profiles(_str(body, "handle"), persona=body.get("persona"),
-                              all_sites=bool(body.get("all_sites")), sites=body.get("sites"))
-    return {"count": len(hits), "profiles": hits}
+    r = enumerate_profiles(_str(body, "handle"), persona=body.get("persona"),
+                           all_sites=bool(body.get("all_sites")), sites=body.get("sites"),
+                           report=True)   # surface coverage (what could NOT be checked)
+    return {"count": len(r["profiles"]), "profiles": r["profiles"], "coverage": r["coverage"]}
 
 
 def _verify(body):
@@ -168,7 +169,7 @@ class Handler(BaseHTTPRequestHandler):
             result = handler(body)
             result["_ms"] = round((time.time() - t) * 1000)
             self._json(200, result)
-        except (BadRequest, UnsafeURL) as e:
+        except (BadRequest, UnsafeURL, ValueError) as e:   # ValueError = input validation (bad handle etc.)
             self._json(400, {"error": str(e)}, t)
         except Exception as e:
             self._json(500, {"error": str(e)[:200]}, t)

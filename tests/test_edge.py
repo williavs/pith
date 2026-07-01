@@ -71,3 +71,48 @@ def test_cctld_registrable():
 def test_company_emails_no_suffix_bleed():
     got = _company_emails(["ceo@acme.co.uk", "x@notacme.co.uk", "spam@other.co.uk"], "https://acme.co.uk")
     assert got == ["ceo@acme.co.uk"]
+
+
+# --- schema.org structured: parentage scoping for both Person and Org ---
+def test_structured_parentage():
+    from pith.extract import structured, enrich
+    # ProfilePage subject Person (mainEntity) kept
+    h = '<script type="application/ld+json">{"@type":"ProfilePage","mainEntity":{"@type":"Person","name":"Jane Owner"}}</script>'
+    assert "Jane Owner" in [e.get("name") for e in structured(h)]
+    # publisher Org dropped, business Org kept
+    h2 = '<script type="application/ld+json">{"@type":"LocalBusiness","name":"Joes","publisher":{"@type":"Organization","name":"WP VIP"}}</script>'
+    names = [e.get("name") for e in structured(h2)]
+    assert "Joes" in names and "WP VIP" not in names
+    # malformed dict telephone not stringified; schema phone canonicalized + deduped
+    assert enrich("", '<script type="application/ld+json">{"@type":"Organization","name":"X","telephone":{"d":"x"}}</script>')["phones"] == []
+    assert enrich("<p>(212) 867-5309</p>", '<script type="application/ld+json">{"@type":"Organization","name":"Y","telephone":"212-867-5309"}</script>')["phones"] == ["(212) 867-5309"]
+
+
+def test_verify_email_length_cap():
+    assert verify_email("x" * 300 + "@example.org")["valid_syntax"] is False
+    assert verify_email("a" * 65 + "@x.com")["valid_syntax"] is False
+
+
+# --- resolve identity: no name conflation, freemail not company, confidence by quality ---
+def test_resolve_no_name_conflation():
+    from pith.resolve import Target, score
+    from pith.core import Result
+    r = Result(url="https://x.com/j")
+    r.structured = [{"@type": "Person", "name": "Johnathan Smithson"}]
+    assert "FULL-NAME" not in score(Target(name="John Smith"), r)["signals"]
+
+
+def test_resolve_freemail_not_company():
+    from pith.resolve import Target, score
+    from pith.core import Result
+    r = Result(url="https://x.com/s")
+    r.emails = ["someone@gmail.com"]
+    assert "COMPANY-DOMAIN" not in score(Target(name="A B", website="https://gmail.com"), r)["signals"]
+
+
+# --- profiles: handle sanitized, coverage reported ---
+def test_profiles_handle_validation():
+    from pith.profiles import enumerate_profiles
+    for bad in ["torvalds/../../linus", "a b", "x?y=1", "foo/bar", ""]:
+        with pytest.raises(ValueError):
+            enumerate_profiles(bad)

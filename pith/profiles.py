@@ -93,24 +93,57 @@ def _check(cfg: dict, handle: str, timeout: int):
     return url if exists else False
 
 
+# role/bot/reserved usernames that exist on many platforms but are NOT a person — surfacing
+# them as high-value contacts misleads an investigator, so hits get flagged reserved=True.
+_RESERVED_HANDLES = frozenset({
+    "admin", "administrator", "root", "test", "test1", "user", "guest", "info", "support",
+    "help", "contact", "mail", "email", "webmaster", "postmaster", "hostmaster", "abuse",
+    "null", "none", "anonymous", "anon", "nobody", "system", "daemon", "bot", "api", "dev",
+    "demo", "example", "sample", "staff", "team", "sales", "marketing", "noreply", "no-reply",
+    "official", "me", "you", "home", "login", "signup",
+})
+_VALID_HANDLE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
+
+
 def enumerate_profiles(handle: str, persona: str | None = None, kind: str | None = None,
                        sites: list[str] | None = None, all_sites: bool = False,
-                       data: str | None = None, workers: int = 25, timeout: int = 10) -> list[dict]:
+                       data: str | None = None, workers: int = 25, timeout: int = 10,
+                       report: bool = False):
     """Handle -> the public profiles that exist, tagged by GTM value. Existence only —
-    run each through resolve.py to confirm it's the TARGET before trusting it."""
+    run each through resolve.py to confirm it's the TARGET before trusting it.
+
+    Reserved/bot handles (admin, test, info...) are enumerated but each hit is flagged
+    reserved=True. An invalid handle (URL-breaking chars, path traversal) raises ValueError.
+
+    report=False (default) returns the list of hits. report=True returns
+    {profiles, coverage:{checked, found, not_found, inconclusive, inconclusive_sites}} so an
+    investigator SEES what could NOT be checked (WAF/timeout/error) rather than reading a
+    silent gap as 'no account here'."""
+    handle = (handle or "").strip()
+    if not _VALID_HANDLE.match(handle):
+        raise ValueError(f"invalid handle {handle!r}: usernames are [A-Za-z0-9._-], 1-64 chars "
+                         "(no slashes, spaces, query strings, or path traversal)")
+    reserved = handle.lower() in _RESERVED_HANDLES
     sd = load_sites(data)
     names = _pick(sd, persona, kind, sites, all_sites)
 
     def one(name):
-        url = _check(sd[name], handle, timeout)
-        if not url:
-            return None
-        tag = GTM_SITES.get(name, ("other", "-", False, ""))
-        return {"site": name, "url": url, "kind": tag[0], "value": tag[1],
-                "recency": tag[2], "gets": tag[3]}
+        url = _check(sd[name], handle, timeout)   # str=exists · False=available · None=inconclusive
+        if url:
+            tag = GTM_SITES.get(name, ("other", "-", False, ""))
+            return name, {"site": name, "url": url, "kind": tag[0], "value": tag[1],
+                          "recency": tag[2], "gets": tag[3], "reserved": reserved}
+        return name, (False if url is False else None)
 
     with ThreadPoolExecutor(max_workers=workers) as pool:
-        hits = [h for h in pool.map(one, names) if h]
-    # curated/valuable first, then the long tail
+        results = list(pool.map(one, names))
+    hits = [r for _, r in results if isinstance(r, dict)]
+    inconclusive = [n for n, r in results if r is None]
     order = {"high": 0, "med": 1, "low": 2, "-": 3}
-    return sorted(hits, key=lambda h: (order.get(h["value"], 3), h["kind"], h["site"]))
+    hits.sort(key=lambda h: (order.get(h["value"], 3), h["kind"], h["site"]))
+    if not report:
+        return hits
+    return {"profiles": hits, "coverage": {
+        "checked": len(results), "found": len(hits),
+        "not_found": sum(1 for _, r in results if r is False),
+        "inconclusive": len(inconclusive), "inconclusive_sites": sorted(inconclusive)}}

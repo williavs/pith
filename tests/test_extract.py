@@ -170,7 +170,7 @@ def test_meta_extracts_og_and_author():
 def test_enrich_folds_schema_phone():
     html = '<script type="application/ld+json">{"@type":"Organization","name":"A","telephone":"+1-800-555-0100"}</script>'
     d = enrich("body text", html)
-    assert "+1-800-555-0100" in d["phones"]
+    assert "(800) 555-0100" in d["phones"]   # schema phone canonicalized (dedups with body text)
     assert d["structured"][0]["name"] == "A"
 
 
