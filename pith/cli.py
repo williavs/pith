@@ -434,6 +434,21 @@ def render_leads(leads, fmt):
     return "\n".join(out)
 
 
+def render_profiles(hits, fmt, verified):
+    if fmt == "json":
+        return json.dumps(hits, indent=2)
+    out = []
+    for h in hits:
+        v = (f"  [{h['verdict']} {int(h.get('confidence', 0) * 100)}% {'+'.join(h.get('signals', [])) or 'weak'}]"
+             if verified else "")
+        out.append(f"  [{h['kind'][:4]}/{h['value']:4}] {h['site']:14} {h['url']}{v}")
+    n = len(hits)
+    tail = (" (verified as the target)" if verified
+            else " (existence only — add --verify-name / --verify-company to confirm identity)")
+    out.append(f"\n{n} profile{'s' if n != 1 else ''}{tail}")
+    return "\n".join(out)
+
+
 # --- website tech + modernness intel (for selling website services) ---
 
 def _domain_age_years(domain: str):
@@ -623,6 +638,14 @@ def main() -> None:
     ap.add_argument("--geo", metavar="LOCATION", help="with --directory: city, state (e.g. 'Columbus, OH')")
     ap.add_argument("--prospect", metavar="QUERY", help="GTM: search a category+geo (needs $PITH_SEARX_URL) -> a lead list, each with dug owner contact")
     ap.add_argument("--intel", metavar="URL", help="GTM: website tech stack + modernness grade + domain age (find dated sites to sell services to)")
+    ap.add_argument("--profiles", metavar="HANDLE", help="OSINT: find a person's public profiles across the web (add --verify-* to confirm identity)")
+    ap.add_argument("--verify-name", metavar="NAME", help="with --profiles: corroborate each profile against this person's name")
+    ap.add_argument("--verify-company", metavar="DOMAIN", help="with --profiles: corroborate against this company domain")
+    ap.add_argument("--anchor", metavar="URL", action="append", help="with --profiles: a known-good profile URL for the person (repeatable; a backlink to it is decisive)")
+    ap.add_argument("--email", metavar="ADDR", action="append", help="with --profiles: a known email for the person (repeatable)")
+    ap.add_argument("--persona", choices=["technical", "creative", "founder", "exec", "default"], help="with --profiles: which value sites to hit for this buyer type")
+    ap.add_argument("--all-sites", action="store_true", help="with --profiles: check all ~480 sites (the long tail), not just the curated GTM subset")
+    ap.add_argument("--include-review", action="store_true", help="with --profiles: also surface REVIEW (single-signal) matches, not just ACCEPT")
     ap.add_argument("--find", metavar="URL", help="GTM: dig a business's public owner contact (ranked emails, phones, socials, WHOIS)")
     ap.add_argument("--enrich", metavar="FILE", help="GTM: read a company list (name,website csv) and output an enriched row per company (socials, emails, careers)")
     ap.add_argument("--about", metavar="QUERY", help="batch: rank candidates by relevance to this (e.g. a target name+company) and fetch the most relevant first")
@@ -653,6 +676,21 @@ def main() -> None:
 
     if args.intel:  # GTM: website tech + modernness intel
         print(render_intel(website_intel(args.intel), "json" if args.format == "json" else "table"))
+        return
+
+    if args.profiles:  # OSINT: public profiles across the web, identity-corroborated
+        from .profiles import enumerate_profiles
+        verifying = bool(args.verify_name or args.verify_company or args.anchor or args.email)
+        if verifying:
+            from .resolve import Target, resolve_profiles
+            target = Target(name=args.verify_name or "",
+                            website=("https://" + args.verify_company) if args.verify_company else "",
+                            anchors=set(args.anchor or []), emails=set(args.email or []))
+            hits = resolve_profiles(args.profiles, target, persona=args.persona,
+                                    all_sites=args.all_sites, include_review=args.include_review)
+        else:
+            hits = enumerate_profiles(args.profiles, persona=args.persona, all_sites=args.all_sites)
+        print(render_profiles(hits, "json" if args.format == "json" else "table", verifying))
         return
 
     if args.find:  # GTM: dig one business's owner contact

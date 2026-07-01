@@ -148,3 +148,7 @@ python benchmarks/source_coverage.py   # full per-source coverage run
 
 The paid Extract API is a thin wrapper around: a scraper + a boilerplate stripper + one
 optional LLM call. All three are free. This is that, packaged.
+
+## Credits
+
+Profile-enumeration site data (`pith/osint_sites.json`) is vendored from the [Sherlock Project](https://github.com/sherlock-project/sherlock) (MIT). Disposable-email list from [umuterturk/email-verifier](https://github.com/umuterturk/email-verifier) (MIT). pith reimplements the check logic; it does not depend on those packages.
