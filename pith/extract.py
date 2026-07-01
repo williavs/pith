@@ -32,7 +32,10 @@ _SOCIAL_JUNK = ("/share", "/intent", "/sharer", "/hashtag/", "/explore", "/home"
 _SOCIAL_HANDLES = {"share", "intent", "home", "login", "search", "explore", "i", "messages",
                    "notifications", "settings", "privacy", "help", "about", "tos", "sharer"}
 
-_TEL = re.compile(r"tel:(\+?[\d][\d\s().-]{5,})")  # explicit phone LINKS only — text regex is too noisy
+_TEL = re.compile(r"tel:(\+?[\d][\d\s().-]{5,})")  # explicit phone LINKS
+# US/NANP phone shown as text — SEPARATORS REQUIRED between groups, so a contiguous digit run
+# (tracking IDs like 0060833459) can't match; only real formatted numbers do.
+_PHONE_FMT = re.compile(r"(?<![\d.])(?:\+?1[-.\s])?\(?\d{3}\)?[-.\s]\d{3}[-.\s]\d{4}(?![\d.])")
 
 _JSON_LD = re.compile(r'<script[^>]*type=["\']application/ld\+json["\'][^>]*>(.*?)</script>', re.S | re.I)
 _ENTITY_TYPES = ("Person", "Organization", "Corporation", "LocalBusiness")
@@ -48,9 +51,12 @@ def emails(text: str) -> list[str]:
                    if not any(j in e.lower() for j in _EMAIL_JUNK)})
 
 
-def phones(html: str) -> list[str]:
-    """Only `tel:` links — reliable. Free-text phone regex catches tracking IDs (measured)."""
-    return sorted({re.sub(r"\s+", " ", t).strip() for t in _TEL.findall(html or "")})
+def phones(text: str) -> list[str]:
+    """`tel:` links plus formatted NANP numbers (separators required, so tracking-ID digit
+    runs don't match). Catches phones shown as plain text in a contact widget/page."""
+    tel = {re.sub(r"\s+", " ", t).strip() for t in _TEL.findall(text or "")}
+    fmt = {re.sub(r"\s+", " ", p).strip() for p in _PHONE_FMT.findall(text or "")}
+    return sorted(tel | fmt)
 
 
 def _is_profile(url: str) -> bool:

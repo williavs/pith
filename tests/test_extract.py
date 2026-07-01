@@ -26,9 +26,18 @@ def test_phones_keeps_tel_links():
     assert "+14155551234" in got and "415-555-1234" in got
 
 
-def test_phones_drops_freetext_numbers():
-    html = "session 0060833459 and order #1603580557 — no tel links here"
-    assert phones(html) == [], f"precision leak: {phones(html)}"
+def test_phones_keeps_formatted_text_numbers():
+    # phones shown as plain text (no tel: link) — the common case trafilatura strips
+    txt = "Call us at (614) 836-8188 or 937-776-4851, toll free +1 330.764.1011"
+    got = phones(txt)
+    for p in ["(614) 836-8188", "937-776-4851"]:
+        assert p in got, f"recall miss: {p} in {got}"
+
+
+def test_phones_drops_contiguous_and_junk():
+    # tracking IDs / contiguous digit runs / dates / versions must NOT match (separators required)
+    junk = "session 0060833459 order 1603580557 date 2026-07-01 version 1.234.567 id 123456789"
+    assert phones(junk) == [], f"precision leak: {phones(junk)}"
 
 
 # ---- socials: keep profile URLs, drop share/intent/nav UI links ----
