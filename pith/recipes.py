@@ -54,6 +54,23 @@ def _area_code(phone: str) -> str:
     return d[:3] if len(d) == 10 else ""
 
 
+# --- people / roster recipe (over Fact evidence, kind="name") ---
+
+def people(facts):
+    """The named people the core surfaced (schema.org Person on team/leadership/about pages),
+    with titles + provenance, deduped by name and ranked by corroboration. This is the roster
+    the core makes EASY to get; an app paints the org picture from it (see
+    examples/gtm/company_people.py). Empty when a site has no machine-readable team — that's
+    the honest boundary of deterministic, no-LLM extraction, not a silent miss."""
+    out = []
+    for f in facts:
+        if f.kind == "name" and f.value:
+            out.append({"name": f.value, "title": (f.labels or {}).get("title", ""),
+                        "corroboration": f.corroboration,
+                        "sources": sorted({s.url for s in f.sources})})
+    return sorted(out, key=lambda p: (-p["corroboration"], p["name"]))
+
+
 # --- identity recipe (over resolve's corroboration signals) ---
 
 def accept_identity(corroborations, min_signals=2, exclude_self=True, alias_hosts=True):

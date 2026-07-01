@@ -62,6 +62,16 @@ def test_accept_identity_knobs_fix_the_persona_bugs():
     assert got[0]["count"] == 1 and got[0]["signals"][0]["source_url"] == "https://x.com/beaulebens"
 
 
+def test_people_roster_recipe():
+    facts = [Fact("Sid S", "name", [Source("u1", "schema.org")], {"title": "CEO"}),
+             Fact("Dmitriy Z", "name", [Source("u1", "schema.org"), Source("u2", "schema.org")], {}),
+             Fact("x@acme.com", "email", [Source("u1", "text")])]
+    r = recipes.people(facts)
+    assert [p["name"] for p in r] == ["Dmitriy Z", "Sid S"]     # ranked by corroboration
+    assert r[1]["title"] == "CEO" and r[0]["corroboration"] == 2
+    assert recipes.people([]) == []                             # honest empty, not a guess
+
+
 def test_qualify_is_the_apps_icp():
     contact = {"grade": "D", "facts": [{"kind": "email"}, {"kind": "phone"}]}
     assert recipes.qualify(contact, require=("email",)) is True

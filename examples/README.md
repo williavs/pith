@@ -20,6 +20,7 @@ via `pith.recipes` (`owner_email`, `rank_phones`). The examples show that split 
 |---|---|---|
 | **gtm/build_sales_list.py** | Build a list from a market: `directory_search` → `website_intel` (A–F grade) → `contact_evidence` + `recipes.owner_email`/`rank_phones`. Ranked JSON. | `python examples/gtm/build_sales_list.py "plumbers" "Tulsa, OK" 8` |
 | **gtm/enrich_list.py** | Enrich a list you already hold: `enrich_company` → firmographics, company-matched emails, socials, tech grade. CSV/JSON. | `python examples/gtm/enrich_list.py stripe.com https://linear.app` |
+| **gtm/company_people.py** | Paint a company's public **people picture**: `contact_evidence` + `recipes.people` → roster (name + title from schema.org) + how to reach in + an honest coverage note when a site has no machine-readable team. | `python examples/gtm/company_people.py https://gitlab.com` |
 | **gtm/companies.csv** | Sample list input for the `pith --from` CLI. | `pith --from examples/gtm/companies.csv --format table` |
 | **scout/** | The same pipeline as a live browser console with SSE observability (a full demo app). | `python examples/scout/server.py` → localhost:8848 |
 
