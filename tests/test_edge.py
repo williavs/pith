@@ -110,6 +110,17 @@ def test_resolve_freemail_not_company():
     assert "COMPANY-DOMAIN" not in score(Target(name="A B", website="https://gmail.com"), r)["signals"]
 
 
+def test_resolve_backlink_aliasing_and_self_reference():
+    # both real investigators found these: x.com must alias to twitter; a self-URL anchor must
+    # NOT count as corroboration.
+    from pith.resolve import Target, score
+    from pith.core import Result
+    gh = Result(url="https://github.com/beau")
+    gh.socials = ["https://twitter.com/beau", "https://github.com/beau"]
+    assert "BACKLINK" in score(Target(name="Beau X", anchors={"https://x.com/beau"}), gh)["signals"]
+    assert "BACKLINK" not in score(Target(name="Beau X", anchors={"https://github.com/beau"}), gh)["signals"]
+
+
 # --- profiles: handle sanitized, coverage reported ---
 def test_profiles_handle_validation():
     from pith.profiles import enumerate_profiles

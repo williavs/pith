@@ -27,9 +27,15 @@ class Target:
     phones: set = field(default_factory=set)
 
 
+# same service under different hostnames — so a real cross-link isn't lost to a host mismatch
+# (x.com vs twitter.com was a confirmed silent false-negative from real investigators).
+_HOST_ALIASES = {"x.com": "twitter.com", "fb.com": "facebook.com", "m.facebook.com": "facebook.com"}
+
+
 def _norm_url(u: str) -> str:
     sp = urlsplit((u or "").lower())
-    return sp.netloc.replace("www.", "") + sp.path.rstrip("/")
+    host = sp.netloc.replace("www.", "")
+    return _HOST_ALIASES.get(host, host) + sp.path.rstrip("/")
 
 
 def _owner_name(r) -> str:
@@ -57,7 +63,11 @@ def score(target: Target, r) -> dict:
 
     from .extract import _FREEMAIL
     signals = []
-    if {_norm_url(u) for u in same} & {_norm_url(a) for a in target.anchors}:
+    # BACKLINK = the candidate page links to a KNOWN-GOOD anchor OTHER THAN ITSELF. Excluding
+    # the candidate's own canonical URL kills the self-reference that faked confidence (a
+    # profile "backlinking" to its own url passed as an anchor). Host-aliased so x.com≡twitter.
+    cand = _norm_url(r.url)
+    if ({_norm_url(u) for u in same} & {_norm_url(a) for a in target.anchors}) - {cand}:
         signals.append("BACKLINK")
     tw = _registrable(target.website) if target.website else ""
     if tw and tw not in _FREEMAIL and tw in page_domains:   # a freemail domain isn't a company signal
