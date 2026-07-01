@@ -53,12 +53,61 @@ class ExtractResult:
 
 # --- fetching ---
 
+import os as _os
+import socket as _socket
+from ipaddress import ip_address as _ip
+
+# pith fetches user-supplied URLs and is now served as an HTTP API — so by default we refuse
+# non-web schemes (no file:// local-file read, no gopher/ftp/data) and refuse hosts that
+# resolve to private/loopback/link-local/reserved IPs (no SSRF into internal services or
+# cloud metadata at 169.254.169.254). Set PITH_ALLOW_LOCAL=1 to opt out for trusted local use.
+_ALLOW_LOCAL = _os.environ.get("PITH_ALLOW_LOCAL") == "1"
+_FETCH_TIMEOUT = int(_os.environ.get("PITH_FETCH_TIMEOUT", "12"))
+
+
+class UnsafeURL(ValueError):
+    """A URL was rejected before fetch: bad scheme, or resolves to a private/internal host."""
+
+
+def _guard_url(url: str) -> str:
+    if _ALLOW_LOCAL:
+        return url
+    parts = urllib.parse.urlsplit((url or "").strip())
+    if parts.scheme not in ("http", "https"):
+        raise UnsafeURL(f"scheme not allowed: {parts.scheme or '(none)'} — only http/https")
+    host = parts.hostname
+    if not host:
+        raise UnsafeURL("no host in URL")
+    try:                                         # every resolved address must be public
+        infos = _socket.getaddrinfo(host, None)
+    except Exception as e:
+        raise UnsafeURL(f"host does not resolve: {host}") from e
+    for info in infos:
+        ip = _ip(info[4][0])
+        if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved or ip.is_multicast:
+            raise UnsafeURL(f"host resolves to a non-public address ({ip}): {host}")
+    return url
+
+
+# short download timeout so one slow/hostile host can't pin a worker for 30s (trafilatura's default)
+_TRAF_CFG = None
+def _traf_config():
+    global _TRAF_CFG
+    if _TRAF_CFG is None:
+        from trafilatura.settings import use_config
+        c = use_config()
+        c.set("DEFAULT", "DOWNLOAD_TIMEOUT", str(_FETCH_TIMEOUT))
+        _TRAF_CFG = c
+    return _TRAF_CFG
+
+
 def _fetch_static(url: str) -> str:
     """Fast path: no browser. Works for the ~90% of pages that aren't JS-rendered."""
-    html = trafilatura.fetch_url(url)
+    _guard_url(url)
+    html = trafilatura.fetch_url(url, config=_traf_config())
     if not html:  # trafilatura declined (rare) -> plain urllib
         req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 pith"})
-        html = urllib.request.urlopen(req, timeout=20).read().decode("utf-8", "ignore")
+        html = urllib.request.urlopen(req, timeout=_FETCH_TIMEOUT).read().decode("utf-8", "ignore")
     return html
 
 
@@ -71,7 +120,8 @@ def _fetch_impersonate(url: str) -> str:
         from curl_cffi import requests as creq
     except ImportError as e:
         raise RuntimeError("impersonation tier needs: pip install 'pith[js]'") from e
-    r = creq.get(url, impersonate="chrome", timeout=20)
+    _guard_url(url)
+    r = creq.get(url, impersonate="chrome", timeout=_FETCH_TIMEOUT)
     r.raise_for_status()
     return r.text
 
@@ -94,6 +144,7 @@ def _fetch_document(url: str) -> tuple[Optional[str], str]:
         from markitdown import MarkItDown
     except ImportError as e:
         raise RuntimeError("document extraction needs: pip install 'pith[docs]'") from e
+    _guard_url(url)
     res = MarkItDown().convert(url)
     return getattr(res, "title", None), res.text_content or ""
 
@@ -113,6 +164,7 @@ def _fetch_js(url: str) -> str:
         raise RuntimeError(
             "JS rendering needs the browser extra: pip install 'pith[js]' && scrapling install"
         ) from e
+    _guard_url(url)
     page = StealthyFetcher.fetch(
         url, headless=True, network_idle=False, timeout=60000,
         solve_cloudflare=True, google_search=True,

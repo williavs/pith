@@ -44,7 +44,7 @@ def _decode_cfemail(hexstr: str) -> str:
     if not out.isascii():                   # non-ascii => not the protected email
         return ""
     out = out.lower()
-    if not _EMAIL.fullmatch(out) or any(j in out for j in _EMAIL_JUNK):  # junk gate, parity with emails()
+    if not _EMAIL.fullmatch(out) or _junk_email(out):  # junk gate, parity with emails()
         return ""
     return out
 
@@ -63,7 +63,7 @@ def atdot_emails(text: str) -> list[str]:
     for m in _ATDOT.finditer(_clean(text)):
         mid = re.sub(r'\s*[\[({]\s*dot\s*[\])}]\s*', '.', m.group(2), flags=re.I)
         cand = f"{m.group(1)}@{mid}.{m.group(3)}".lower()
-        if _EMAIL.fullmatch(cand) and not any(j in cand for j in _EMAIL_JUNK):
+        if _EMAIL.fullmatch(cand) and not _junk_email(cand):
             out.add(cand)
     return sorted(out)
 
@@ -76,11 +76,34 @@ def cfemails(html: str) -> list[str]:
     return sorted({e for e in (_decode_cfemail(b) for b in blobs) if e})
 
 _EMAIL = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,18}")  # real TLDs <=18ch
-# junk that matches the email shape but isn't a real contact: error trackers, placeholders,
-# asset filenames, framework noise.
-_EMAIL_JUNK = ("sentry.", "@sentry", "example.", "@example", "wixpress", "@2x", ".png", ".jpg",
-               ".gif", ".webp", "your@", "email@example", "name@", "user@", "@domain", "@email",
-               "@company", "test@test", "godaddy", "@sentry.io")
+# SAFE substrings — these only ever appear in junk (error trackers, asset filenames, retina
+# suffixes), so a substring match won't hit a real address.
+_ASSET_JUNK = ("sentry.", "@sentry", "wixpress", "@2x", "@3x", ".png", ".jpg", ".jpeg",
+               ".gif", ".webp", ".svg")
+# EXACT placeholder local-parts / domains from template boilerplate. Matched whole (not as
+# substrings) so a real address like john.lastname@acme.com is NOT dropped by "name@".
+# Only locals that are NEVER a real contact — name-like locals (name/user/john.doe/lastname)
+# collide with real addresses, so template junk is caught by _PLACEHOLDER_DOMAIN instead.
+_PLACEHOLDER_LOCAL = {"your", "yourname", "youremail", "yourusername"}
+_PLACEHOLDER_DOMAIN = {"example.com", "example.org", "example.net", "email.com", "domain.com",
+                       "company.com", "yourcompany.com", "yourdomain.com", "yoursite.com",
+                       "test.com", "sentry.io", "godaddy.com"}
+# file extensions that look like a 2-18 char alpha TLD — report@final.doc is a filename, not email.
+_FILE_EXT_TLD = {"png", "jpg", "jpeg", "gif", "webp", "svg", "doc", "docx", "pdf", "xls", "xlsx",
+                 "ppt", "pptx", "zip", "gz", "mp4", "mov", "css", "js", "json", "html", "htm",
+                 "php", "xml", "txt", "csv", "webm", "ico"}
+
+
+def _junk_email(e: str) -> bool:
+    """True if an email-shaped string is template junk, an asset filename, or a placeholder —
+    used everywhere emails are emitted so the same gate applies to visible/cfemail/atdot/schema."""
+    el = e.lower()
+    if any(j in el for j in _ASSET_JUNK):
+        return True
+    local, _, domain = el.partition("@")
+    if local in _PLACEHOLDER_LOCAL or domain in _PLACEHOLDER_DOMAIN:
+        return True
+    return domain.rsplit(".", 1)[-1] in _FILE_EXT_TLD
 
 # social PROFILE urls only — not share/intent/generic-nav links, not other people's buttons.
 _SOCIAL = re.compile(
@@ -92,16 +115,33 @@ _SOCIAL = re.compile(
     r"|instagram\.com/[A-Za-z0-9._]+)",
     re.I,
 )
-# handles/paths that are UI, not a person: share buttons, intents, nav, generic pages.
+# handles/paths that are UI, not a person: share buttons, intents, nav, generic pages,
+# tracking pixels (facebook.com/tr), content permalinks (instagram.com/p/, /reel/, /tv/),
+# product/marketing pages (github.com/pricing, /features).
 _SOCIAL_JUNK = ("/share", "/intent", "/sharer", "/hashtag/", "/explore", "/home", "/login",
-                "/search", "/privacy", "/help", "/about", "/tos", "/policies")
-_SOCIAL_HANDLES = {"share", "intent", "home", "login", "search", "explore", "i", "messages",
-                   "notifications", "settings", "privacy", "help", "about", "tos", "sharer"}
+                "/search", "/privacy", "/help", "/about", "/tos", "/policies", "/tr", "/p/",
+                "/reel", "/reels", "/tv/", "/stories/", "/story/", "/plugins/", "/dialog/",
+                "/pricing", "/features", "/marketplace", "/topics", "/sponsors", "/pulls",
+                "/issues", "/watch", "/events", "/groups", "/pages/", "/dir/", "?")
+# reserved path segments that are pages/products/nav, never a personal or business handle.
+_SOCIAL_HANDLES = {
+    "share", "intent", "home", "login", "signup", "search", "explore", "i", "messages",
+    "notifications", "settings", "privacy", "help", "about", "tos", "terms", "sharer", "tr",
+    "p", "reel", "reels", "tv", "stories", "story", "watch", "events", "groups", "pages",
+    "plugins", "dialog", "marketplace", "gaming", "live", "accounts", "direct", "web",
+    "pricing", "features", "topics", "sponsors", "pulls", "issues", "orgs", "apps",
+    "collections", "trending", "new", "join", "contact", "security", "enterprise", "team",
+    "business", "developers", "docs", "status", "support", "download", "mobile", "careers",
+    "jobs", "blog", "press", "legal", "cookies", "ads", "policies",
+}
 
 _TEL = re.compile(r"tel:(\+?[\d][\d\s().-]{5,})")  # explicit phone LINKS
 # US/NANP phone shown as text — SEPARATORS REQUIRED between groups, so a contiguous digit run
 # (tracking IDs like 0060833459) can't match; only real formatted numbers do.
-_PHONE_FMT = re.compile(r"(?<![\d.])(?:\+?1[-.\s])?\(?\d{3}\)?[-.\s]\d{3}[-.\s]\d{4}(?![\d.])")
+_PHONE_FMT = re.compile(r"(?<![\d.])(?:\+?1[-.\s])?\(?\d{3}\)?[-.\s]\d{3}[-.\s]\d{4}(?!\d)")
+# International: a literal + then a country code and 7-14 more digits (E.164 is +[8..15] digits).
+# The leading + is the anchor so this can't grab prices/IDs; digit count is validated in _canon_phone.
+_PHONE_INTL = re.compile(r"(?<![\w+])\+\d[\d\s().\-]{6,18}\d(?!\d)")
 
 _JSON_LD = re.compile(r'<script[^>]*type=["\']application/ld\+json["\'][^>]*>(.*?)</script>', re.S | re.I)
 _ORG_TYPES = ("Organization", "Corporation", "LocalBusiness", "Store", "Restaurant",
@@ -122,15 +162,16 @@ _META = [("og:title", "title"), ("og:description", "description"), ("og:site_nam
 
 def emails(text: str) -> list[str]:
     text = _clean(text)  # decode entities + fold invisibles before matching
-    return sorted({e for e in _EMAIL.findall(text)
-                   if not any(j in e.lower() for j in _EMAIL_JUNK)})
+    return sorted({e for e in _EMAIL.findall(text) if not _junk_email(e)})
 
 
 def _canon_phone(p: str):
-    """Canonicalize a NANP number to one form so the same phone doesn't appear 5 ways.
-    Returns '(xxx) xxx-xxxx' for a valid 10-digit NANP, '' for a recognized placeholder to
-    DROP (area code 555 — not an assignable NANP NPA, so it's fiction/template junk like
-    (555) 555-5555), or None for a non-NANP string (kept as-is; could be international)."""
+    """Canonicalize a phone to one form so the same number doesn't appear 5 ways.
+    Returns '(xxx) xxx-xxxx' for a valid 10-digit NANP, '+<digits>' (E.164) for an
+    international number (leading + and 8-15 digits), '' for a recognized placeholder to
+    DROP (area code 555 — not an assignable NANP NPA, so it's fiction like (555) 555-5555),
+    or None for anything else (kept as-is)."""
+    intl = "+" in p
     d = re.sub(r"\D", "", p)
     if len(d) == 11 and d[0] == "1":
         d = d[1:]
@@ -138,6 +179,8 @@ def _canon_phone(p: str):
         if d[:3] == "555":                                      # 555 is not a real area code
             return ""
         return f"({d[:3]}) {d[3:6]}-{d[6:]}"
+    if intl and 8 <= len(d) <= 15:                              # international, E.164-normalized
+        return "+" + d
     return None
 
 
@@ -148,14 +191,11 @@ def phones(text: str) -> list[str]:
     text = _clean(text)
     raw = {re.sub(r"\s+", " ", t).strip() for t in _TEL.findall(text)}
     raw |= {re.sub(r"\s+", " ", p).strip() for p in _PHONE_FMT.findall(text)}
-    out = set()
-    for p in raw:
-        c = _canon_phone(p)
-        if c is None:            # non-NANP — keep raw (intl, extensions, etc.)
-            out.add(p)
-        elif c:                  # valid canonical; '' = recognized junk, dropped
-            out.add(c)
-    return sorted(out)
+    raw |= {re.sub(r"\s+", " ", p).strip() for p in _PHONE_INTL.findall(text)}
+    # Only emit CANONICAL numbers (valid NANP or +E.164). A formatted triple that fails NANP
+    # validation (area/exchange starting 0 or 1) is a SKU / invoice / part number, not a phone —
+    # dropping it beats leaking a false contact. c == "" is a recognized placeholder (555), also dropped.
+    return sorted({c for c in (_canon_phone(p) for p in raw) if c})
 
 
 def _is_profile(url: str) -> bool:
@@ -297,6 +337,24 @@ def _disposable() -> frozenset:
     return _DISPOSABLE
 
 
+def _email_syntax_ok(email: str) -> bool:
+    """Unicode-aware syntax check for a KNOWN address (SMTPUTF8/IDN allowed) — distinct from
+    the conservative ASCII `_EMAIL` extractor, which scans noisy body text. Accepts
+    josé@example.com and 用户@例子.公司; rejects spaces, empty parts, dotless/short TLDs."""
+    if email.count("@") != 1:
+        return False
+    local, domain = email.split("@")
+    if not local or any(c.isspace() for c in local) or ".." in email:
+        return False
+    labels = domain.split(".")
+    if len(labels) < 2 or any(not lb or any(c.isspace() for c in lb) for lb in labels):
+        return False
+    tld = labels[-1]
+    if tld.startswith("xn--"):                       # punycode IDN TLD (.рф etc.)
+        return len(tld) > 4
+    return len(tld) >= 2 and tld.replace("-", "").isalpha()   # .isalpha() is unicode-aware
+
+
 def verify_email(email: str, check_domain: bool = False) -> dict:
     """Deterministic email quality signals — no SMTP probe, no external API, no LLM.
     Reports: valid_syntax, is_role (generic mailbox), is_disposable (throwaway domain),
@@ -304,7 +362,7 @@ def verify_email(email: str, check_domain: bool = False) -> dict:
     dead/typo domains. NOT a deliverability check — real SMTP verification is unreliable
     (catch-all / greylisting) and risks sender reputation, so it's deliberately omitted."""
     email = (email or "").strip().lower()
-    if not _EMAIL.fullmatch(email):
+    if not _email_syntax_ok(email):
         return {"email": email, "valid_syntax": False}
     local, domain = email.rsplit("@", 1)
     base = local.split("+", 1)[0]
@@ -337,7 +395,7 @@ def enrich(markdown: str, html: str) -> dict:
     for e in st:
         if e.get("email"):
             em |= set(emails(str(e["email"])))
-    em = {e for e in em if not any(j in e.lower() for j in _EMAIL_JUNK)}
+    em = {e for e in em if not _junk_email(e)}
     return {
         "emails": sorted(em),
         "phones": sorted(set(tel)),

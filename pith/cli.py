@@ -105,10 +105,29 @@ def gate(targets, query: str, budget: int | None = None, snippets: dict | None =
 
 # --- GTM company enrichment: bare company list -> structured rows a rep can act on ---
 
+# Multi-label public suffixes where the registrable domain is the last THREE labels, not two
+# (acme.co.uk -> acme.co.uk, not co.uk). A curated set of the common ccTLD second levels — not
+# the full Public Suffix List, but it covers the ccTLDs a GTM/OSINT user actually meets.
+# ponytail: add tldextract (bundled PSL) if an exotic suffix shows up in real data.
+_MULTI_SUFFIX = frozenset({
+    "co.uk", "org.uk", "me.uk", "ac.uk", "gov.uk", "ltd.uk", "plc.uk", "net.uk", "sch.uk",
+    "com.au", "net.au", "org.au", "edu.au", "gov.au", "id.au", "asn.au",
+    "co.nz", "net.nz", "org.nz", "govt.nz", "ac.nz", "geek.nz",
+    "co.za", "org.za", "net.za", "co.jp", "or.jp", "ne.jp", "ac.jp", "go.jp", "co.kr", "or.kr",
+    "com.br", "net.br", "org.br", "com.mx", "com.ar", "com.co", "com.pe", "com.ve",
+    "co.in", "net.in", "org.in", "firm.in", "gen.in", "ind.in", "com.sg", "com.hk", "com.tw",
+    "com.cn", "net.cn", "org.cn", "gov.cn", "co.id", "com.my", "com.ph", "co.th", "in.th",
+    "com.vn", "com.ua", "co.ke", "co.ug", "com.ng", "co.il", "com.tr", "gen.tr", "com.pk",
+    "com.sa", "com.eg", "com.gr", "com.cy", "co.at", "or.at",
+})
+
+
 def _registrable(url: str) -> str:
     from urllib.parse import urlsplit
-    host = urlsplit(url if "//" in url else "//" + url).netloc.lower().split(":")[0]
+    host = urlsplit(url if "//" in url else "//" + url).netloc.lower().split(":")[0].strip(".")
     parts = host.split(".")
+    if len(parts) >= 3 and ".".join(parts[-2:]) in _MULTI_SUFFIX:
+        return ".".join(parts[-3:])          # acme.co.uk, not co.uk
     return ".".join(parts[-2:]) if len(parts) >= 2 else host
 
 
@@ -134,7 +153,10 @@ def _company_emails(emails, website: str) -> list[str]:
     """Keep only emails on the company's own domain — a company-domain address is a real
     contact; an off-domain one (kevin@encom.com on linear.app) is demo/third-party noise."""
     dom = _registrable(website)
-    return [e for e in emails if e.split("@")[-1].lower().endswith(dom)]
+    # exact domain or a true subdomain (dot boundary) — NOT a suffix match, which would let
+    # notacme.co.uk pass for acme.co.uk.
+    return [e for e in emails
+            if (d := e.split("@")[-1].lower()) == dom or d.endswith("." + dom)]
 
 
 def enrich_company(name: str, website: str, workers: int = 4) -> dict:

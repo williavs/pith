@@ -26,46 +26,82 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse
 
 from . import Extractor, __version__, verify_email
+from .core import UnsafeURL
 
 _MAX = int(os.environ.get("PITH_MAX_CONCURRENCY", "16"))
 _HEAVY = threading.Semaphore(_MAX)
 
 
+MAX_URLS = int(os.environ.get("PITH_MAX_URLS", "200"))
+
+
+class BadRequest(ValueError):
+    """Client input was malformed — surfaces as HTTP 400, not 500."""
+
+
+def _str(body, key):
+    """Required non-empty string field, or a clean 400."""
+    v = body.get(key)
+    if not isinstance(v, str) or not v.strip():
+        raise BadRequest(f"'{key}' must be a non-empty string")
+    return v.strip()
+
+
+def _int(body, key, default, lo=1, hi=64):
+    """Optional int field, clamped, or a clean 400 on non-numeric input."""
+    v = body.get(key, default)
+    try:
+        n = int(v)
+    except (TypeError, ValueError):
+        raise BadRequest(f"'{key}' must be an integer, got {v!r}")
+    return max(lo, min(hi, n))
+
+
 def _extract(body):
-    urls = body.get("urls") or ([body["url"]] if body.get("url") else [])
+    urls = body.get("urls")
+    if urls is None and body.get("url") is not None:
+        urls = [_str(body, "url")]
+    if not isinstance(urls, list):
+        raise BadRequest("provide 'urls' (a list of URL strings) or 'url' (a string)")
+    urls = [u for u in urls if isinstance(u, str) and u.strip()]
     if not urls:
-        raise ValueError("provide 'urls' (list) or 'url'")
+        raise BadRequest("no valid URL strings in 'urls'")
+    if len(urls) > MAX_URLS:
+        raise BadRequest(f"too many urls: {len(urls)} (max {MAX_URLS} per request)")
     out = Extractor().extract(urls, full_content=bool(body.get("full_content")),
                               render_js=body.get("js", "auto"),
-                              concurrency=int(body.get("concurrency", min(8, len(urls)))))
+                              concurrency=_int(body, "concurrency", min(8, len(urls))))
     return {"results": [asdict(r) for r in out.results], "errors": [str(e) for e in out.errors]}
 
 
 def _contact(body):
     from .cli import find_contact
-    return find_contact(body["website"], workers=int(body.get("workers", 4)))
+    from .core import _guard_url
+    return find_contact(_guard_url(_str(body, "website")), workers=_int(body, "workers", 4))
 
 
 def _intel(body):
     from .cli import website_intel
-    return website_intel(body["url"])
+    from .core import _guard_url
+    return website_intel(_guard_url(_str(body, "url")))
 
 
 def _directory(body):
     from .cli import directory_search
-    rows = directory_search(body["category"], body["location"], limit=int(body.get("limit", 30)))
+    rows = directory_search(_str(body, "category"), _str(body, "location"),
+                            limit=_int(body, "limit", 30, lo=1, hi=500))
     return {"count": len(rows), "businesses": rows}
 
 
 def _profiles(body):
     from .profiles import enumerate_profiles
-    hits = enumerate_profiles(body["handle"], persona=body.get("persona"),
+    hits = enumerate_profiles(_str(body, "handle"), persona=body.get("persona"),
                               all_sites=bool(body.get("all_sites")), sites=body.get("sites"))
     return {"count": len(hits), "profiles": hits}
 
 
 def _verify(body):
-    return verify_email(body["email"])
+    return verify_email(_str(body, "email"))
 
 
 # path -> (handler, heavy?). heavy handlers do network fetches and go through the gate.
@@ -79,13 +115,20 @@ _ROUTES = {
 }
 
 
+_READ_TIMEOUT = int(os.environ.get("PITH_READ_TIMEOUT", "15"))   # slowloris guard
+_MAX_BODY = int(os.environ.get("PITH_MAX_BODY", str(4 * 1024 * 1024)))
+
+
 class Handler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"          # keep-alive: connection reuse for load tests
+    timeout = _READ_TIMEOUT                # socket read timeout — a stalled/slowloris client is dropped
 
     def log_message(self, *a):
         pass
 
-    def _json(self, code, obj):
+    def _json(self, code, obj, t=None):
+        if t is not None:
+            obj.setdefault("_ms", round((time.time() - t) * 1000))
         b = json.dumps(obj).encode()
         self.send_response(code)
         self.send_header("Content-Type", "application/json")
@@ -100,17 +143,24 @@ class Handler(BaseHTTPRequestHandler):
             self._json(404, {"error": "GET /health; POST /extract /contact /intel /directory /profiles /verify-email"})
 
     def do_POST(self):
+        t = time.time()
         path = urlparse(self.path).path
         route = _ROUTES.get(path)
         if not route:
-            return self._json(404, {"error": f"unknown endpoint {path}"})
+            return self._json(404, {"error": f"unknown endpoint {path}"}, t)
         handler, heavy = route
         try:
             n = int(self.headers.get("Content-Length", 0))
+        except ValueError:
+            return self._json(400, {"error": "invalid Content-Length"}, t)
+        if n > _MAX_BODY:
+            return self._json(413, {"error": f"body too large ({n} bytes, max {_MAX_BODY})"}, t)
+        try:
             body = json.loads(self.rfile.read(n) or b"{}")
         except Exception as e:
-            return self._json(400, {"error": f"bad JSON body: {e}"})
-        t = time.time()
+            return self._json(400, {"error": f"bad JSON body: {e}"}, t)
+        if not isinstance(body, dict):
+            return self._json(400, {"error": "JSON body must be an object"}, t)
         gate = _HEAVY if heavy else None
         if gate:
             gate.acquire()
@@ -118,10 +168,10 @@ class Handler(BaseHTTPRequestHandler):
             result = handler(body)
             result["_ms"] = round((time.time() - t) * 1000)
             self._json(200, result)
-        except KeyError as e:
-            self._json(400, {"error": f"missing field {e}"})
+        except (BadRequest, UnsafeURL) as e:
+            self._json(400, {"error": str(e)}, t)
         except Exception as e:
-            self._json(500, {"error": str(e)[:200]})
+            self._json(500, {"error": str(e)[:200]}, t)
         finally:
             if gate:
                 gate.release()
