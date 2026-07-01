@@ -68,7 +68,35 @@ def score(target: Target, r) -> dict:
 
     c = 2 * ("BACKLINK" in signals) + sum(s in signals for s in ("COMPANY-DOMAIN", "FULL-NAME", "SHARED-CONTACT"))
     verdict = "ACCEPT" if c >= 2 else "REVIEW" if c == 1 else "REJECT"
-    return {"owner_name": owner, "verdict": verdict, "confidence": round(min(c / 3, 1.0), 2), "signals": signals}
+    return {"owner_name": owner, "verdict": verdict, "confidence": round(min(c / 3, 1.0), 2),
+            "signals": signals, "links": sorted(_norm_url(u) for u in same)}
+
+
+def resolve_person(handle, target: Target, persona=None, all_sites=False, workers=6) -> dict:
+    """The whole person: enumerate + corroborate profiles, then apply cross-link boost — a
+    profile another verified profile links TO is mutually corroborated (REVIEW -> ACCEPT).
+    Returns the verified profiles + an overall confidence + the best channels to reach them."""
+    hits = resolve_profiles(handle, target, persona=persona, all_sites=all_sites,
+                            include_review=True, workers=workers)
+    by_url = {_norm_url(h["url"]): h for h in hits}
+    for h in hits:                                    # who links to whom
+        for link in h.get("links", []):
+            if link in by_url and link != _norm_url(h["url"]):
+                by_url[link]["_xlinks"] = by_url[link].get("_xlinks", 0) + 1
+    for h in hits:                                    # a cross-linked REVIEW becomes ACCEPT
+        x = h.get("_xlinks", 0)
+        if x:
+            h["signals"] = h.get("signals", []) + [f"XLINK({x})"]
+            h["confidence"] = round(min(1.0, h["confidence"] + 0.34 * x), 2)
+            if h["verdict"] == "REVIEW":
+                h["verdict"] = "ACCEPT"
+    accepted = [h for h in hits if h["verdict"] == "ACCEPT"]
+    rank = {"high": 0, "med": 1, "low": 2, "-": 3}
+    channels = sorted(accepted, key=lambda h: (rank.get(h["value"], 3), not h.get("recency")))
+    overall = round(min(1.0, 0.4 + 0.15 * len(accepted)), 2) if accepted else 0.0
+    return {"handle": handle, "confidence": overall,
+            "profiles": sorted(accepted, key=lambda h: (-h["confidence"], h["site"])),
+            "best_channels": [c["site"] for c in channels[:3]]}
 
 
 def resolve_profiles(handle, target: Target, persona=None, all_sites=False, sites=None,
