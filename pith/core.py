@@ -252,6 +252,20 @@ class Extractor:
     """Free Extract client. No API key, no LLM — clean markdown + deterministic structured
     data (emails/socials/schema.org) out. The stealth browser and tier logic are hidden."""
 
+    async def aextract(self, urls, **kw) -> "ExtractResult":
+        """Async-friendly extract for callers with a running event loop (FastAPI, async apps).
+
+        pith's fetch stack is threaded, and the browser tier drives Playwright with its own
+        loop — calling it directly from a coroutine blocks the caller's loop and can raise
+        'event loop already running'. Offloading the whole sync call to a worker thread keeps
+        YOUR loop free AND gives the browser its own clean loop in that thread. Await it, or
+        asyncio.gather() many — they run concurrently without blocking.
+
+            out = await Extractor().aextract(urls, concurrency=8)
+        """
+        import asyncio
+        return await asyncio.to_thread(self.extract, urls, **kw)
+
     def extract(
         self,
         urls: list[str],
