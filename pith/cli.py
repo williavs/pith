@@ -210,8 +210,9 @@ def _whois_registrant(domain: str) -> dict:
 
 def _name_like(local: str) -> bool:
     """A local part that looks like a real person: firstname.lastname / first_last (two short
-    alpha tokens). NOT a functional mailbox word (accommodations, candidatefeedback)."""
-    return bool(re.match(r"^[a-z]{2,12}[._-][a-z]{2,12}$", local.split("+", 1)[0]))
+    alpha tokens joined by . or _). A hyphen is NOT a name join — it's team mailboxes
+    (security-internal, security-reports), which must stay 'functional', not 'person'."""
+    return bool(re.match(r"^[a-z]{2,12}[._][a-z]{2,12}$", local.split("+", 1)[0]))
 
 
 def _email_type_scoped(email: str, domain: str) -> str:
@@ -583,8 +584,8 @@ def crawl_site(seed: str, sections=_SECTIONS, limit: int = 25) -> list[tuple[str
     high-value sections (about/contact/team/...). One level — nav links cover the GTM
     sections, and walled pages cost ~4-5s each so coverage is the wrong goal anyway.
     ponytail: one level; recurse if a real site buries its team page deeper than nav."""
-    req = urllib.request.Request(seed, headers={"User-Agent": "Mozilla/5.0 pith"})
-    html = urllib.request.urlopen(req, timeout=30).read().decode("utf-8", "ignore")
+    from .core import _fetch_static
+    html = _fetch_static(seed)   # SSRF-guarded + gzip-aware (raw urllib.urlopen was neither)
     return _section_links(seed, html, sections, limit)
 
 

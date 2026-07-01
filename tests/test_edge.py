@@ -110,6 +110,36 @@ def test_resolve_freemail_not_company():
     assert "COMPANY-DOMAIN" not in score(Target(name="A B", website="https://gmail.com"), r)["signals"]
 
 
+def test_crawl_site_is_ssrf_guarded():
+    # crawl_site (the first fetch of every contact_evidence run) must honor the guard.
+    from pith.cli import crawl_site
+    from pith.core import UnsafeURL
+    for bad in ["http://127.0.0.1/", "file:///etc/passwd", "http://169.254.169.254/"]:
+        with pytest.raises(UnsafeURL):
+            crawl_site(bad)
+
+
+def test_socials_reject_subdomains_and_nav():
+    # site chrome (api./docs./collector. subdomains, bare-domain nav slugs) is not a profile
+    from pith.extract import socials
+    html = " ".join(f'<a href="{u}">x</a>' for u in [
+        "https://github.com/sindresorhus", "https://docs.github.com/site-policy",
+        "https://collector.github.com/github", "https://github.com/why-github"])
+    assert socials(html) == ["https://github.com/sindresorhus"]
+
+
+def test_fediverse_handle_not_email():
+    from pith.extract import emails
+    assert emails("ping x@mastodon.social") == []
+    assert emails("real jane@acme.com") == ["jane@acme.com"]
+
+
+def test_name_like_excludes_team_mailboxes():
+    from pith.cli import _email_type_scoped
+    assert _email_type_scoped("jane.diaz@acme.com", "acme.com") == "person"
+    assert _email_type_scoped("security-internal@acme.com", "acme.com") == "functional"
+
+
 def test_resolve_backlink_aliasing_and_self_reference():
     # both real investigators found these: x.com must alias to twitter; a self-URL anchor must
     # NOT count as corroboration.

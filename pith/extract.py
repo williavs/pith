@@ -94,20 +94,32 @@ _FILE_EXT_TLD = {"png", "jpg", "jpeg", "gif", "webp", "svg", "doc", "docx", "pdf
                  "php", "xml", "txt", "csv", "webm", "ico"}
 
 
+# fediverse instances: user@instance LOOKS exactly like an email but is a Mastodon/Pleroma
+# handle (usually surfaced from a rel=me link), not a deliverable address. The big instances
+# cover most of it; the long tail is unbounded (ponytail: add on report).
+_FEDIVERSE = frozenset({
+    "mastodon.social", "mastodon.online", "mas.to", "mstdn.social", "fosstodon.org",
+    "hachyderm.io", "techhub.social", "infosec.exchange", "ioc.exchange", "social.lol",
+    "mastodon.world", "universeodon.com", "front-end.social", "indieweb.social",
+})
+
+
 def _junk_email(e: str) -> bool:
-    """True if an email-shaped string is template junk, an asset filename, or a placeholder —
-    used everywhere emails are emitted so the same gate applies to visible/cfemail/atdot/schema."""
+    """True if an email-shaped string is template junk, an asset filename, a placeholder, or a
+    fediverse handle — used everywhere emails are emitted so the same gate applies."""
     el = e.lower()
     if any(j in el for j in _ASSET_JUNK):
         return True
     local, _, domain = el.partition("@")
-    if local in _PLACEHOLDER_LOCAL or domain in _PLACEHOLDER_DOMAIN:
+    if local in _PLACEHOLDER_LOCAL or domain in _PLACEHOLDER_DOMAIN or domain in _FEDIVERSE:
         return True
     return domain.rsplit(".", 1)[-1] in _FILE_EXT_TLD
 
 # social PROFILE urls only — not share/intent/generic-nav links, not other people's buttons.
+# Subdomain restricted to www/m: a profile is on the apex, so api./docs./collector.github.com
+# (site chrome) no longer masquerade as profiles.
 _SOCIAL = re.compile(
-    r"https?://(?:[a-z0-9-]+\.)?"
+    r"https?://(?:(?:www|m)\.)?"
     r"(?:linkedin\.com/(?:in|company)/[A-Za-z0-9%_-]+"
     r"|(?:twitter|x)\.com/[A-Za-z0-9_]{2,15}"
     r"|github\.com/[A-Za-z0-9-]+"
@@ -133,6 +145,9 @@ _SOCIAL_HANDLES = {
     "collections", "trending", "new", "join", "contact", "security", "enterprise", "team",
     "business", "developers", "docs", "status", "support", "download", "mobile", "careers",
     "jobs", "blog", "press", "legal", "cookies", "ads", "policies",
+    # github marketing/nav slugs (bare-domain chrome that isn't a user)
+    "why-github", "accelerator", "customer-stories", "partners", "premium-support", "resources",
+    "solutions", "mcp", "readme", "spark", "copilot", "codespaces", "actions", "packages",
 }
 
 _TEL = re.compile(r"tel:(\+?[\d][\d\s().-]{5,})")  # explicit phone LINKS
