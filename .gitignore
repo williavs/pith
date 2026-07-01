@@ -14,3 +14,7 @@ benchmarks/go/pithbench
 benchmarks/dossier_output.md
 benchmarks/dossier.html
 examples/datatables/index.html
+
+# persona demo outputs with real private-individual PII — regenerate locally via the driver
+examples/personas/agency-founder/opportunities.json
+examples/personas/agency-founder/outreach.md
