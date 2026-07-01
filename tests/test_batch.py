@@ -2,7 +2,55 @@
 import json
 
 from pith.cli import (read_targets, run_batch, render, _section_links, score_relevance, gate,
-                      _company_social, _company_emails, _registrable, render_enrich)
+                      _company_social, _company_emails, _registrable, render_enrich,
+                      _email_type, find_contact, render_contact)
+
+
+def test_email_type_every_class():
+    d = "acme.com"
+    assert _email_type("bigboss@gmail.com", d) == "owner"     # freemail on a biz = owner
+    assert _email_type("jane.doe@acme.com", d) == "person"    # on-domain, named
+    assert _email_type("sales@acme.com", d) == "role"         # on-domain, generic mailbox
+    assert _email_type("vendor@other.io", d) == "other"       # off-domain corporate
+    assert _email_type("x@0-mail.com", d) == "drop"           # disposable
+    assert _email_type("not-an-email", d) == "drop"           # invalid syntax
+
+
+def test_find_contact_ranks_owner_first_drops_junk(monkeypatch):
+    from pith import cli
+    monkeypatch.setattr(cli, "crawl_site", lambda w, limit=8: [(None, w)])
+    monkeypatch.setattr(cli, "_whois_registrant", lambda d: {})
+
+    class _Ex:
+        def extract(self, urls, **kw):
+            return ExtractResult(results=[Result(url=urls[0],
+                emails=["sales@acme.com", "owner@gmail.com", "jane@acme.com", "junk@0-mail.com"],
+                phones=["+1-555-000-1111"], socials=["https://facebook.com/acme"])])
+    monkeypatch.setattr(cli, "Extractor", lambda: _Ex())
+
+    c = find_contact("https://acme.com")
+    types = [e["type"] for e in c["emails"]]
+    assert types[0] == "owner"                         # gmail owner ranked first
+    assert types == ["owner", "person", "role"]        # disposable dropped, right order
+    assert c["phones"] == ["+1-555-000-1111"]
+
+
+def test_find_contact_survives_crawl_failure(monkeypatch):
+    from pith import cli
+    def boom(w, limit=8):
+        raise RuntimeError("dead site")
+    monkeypatch.setattr(cli, "crawl_site", boom)
+    monkeypatch.setattr(cli, "_whois_registrant", lambda d: {})
+    monkeypatch.setattr(cli, "Extractor", lambda: type("E", (), {
+        "extract": lambda self, urls, **kw: ExtractResult(errors=[{"url": urls[0], "error": "x"}])})())
+    c = find_contact("https://dead.example")           # must not raise
+    assert c["emails"] == [] and c["phones"] == []
+
+
+def test_render_contact_json_and_empty():
+    c = {"website": "x", "domain": "x.com", "pages": 0, "emails": [], "phones": [], "socials": [], "whois": {}}
+    assert '"domain": "x.com"' in render_contact(c, "json")
+    assert "(none found)" in render_contact(c, "table")
 from pith.core import Result, ExtractResult
 
 

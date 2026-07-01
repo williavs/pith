@@ -158,6 +158,78 @@ def enrich_company(name: str, website: str, workers: int = 4) -> dict:
     }
 
 
+# email value order for GTM: an owner-operator's freemail beats a named person on the
+# company domain beats a generic role mailbox. Disposable/invalid are dropped.
+_EMAIL_RANK = {"owner": 0, "person": 1, "role": 2, "other": 3}
+
+
+def _email_type(email: str, domain: str) -> str:
+    from .extract import verify_email
+    v = verify_email(email)
+    if not v["valid_syntax"] or v["is_disposable"]:
+        return "drop"
+    if v["is_freemail"]:
+        return "owner"                       # freemail on a business site = the owner-operator
+    if email.split("@")[-1].endswith(domain):
+        return "role" if v["is_role"] else "person"
+    return "other"
+
+
+def _whois_registrant(domain: str) -> dict:
+    """Registrant email/phone/name from WHOIS, with privacy-proxy records dropped (their
+    phone is the proxy's, not the owner's). Real for small biz that never enabled privacy."""
+    import subprocess
+    try:
+        out = subprocess.run(["whois", domain], capture_output=True, text=True, timeout=20).stdout
+    except Exception:
+        return {}
+    proxy = ("domains by proxy", "registration private", "privacy", "redacted", "whoisguard",
+             "withheld", "/whois", "contactdomainowner", "not disclosed", "perfect privacy")
+    got = {}
+    for line in out.splitlines():
+        m = re.match(r"\s*Registrant (Email|Phone|Name|Organization)\s*:\s*(.+)", line, re.I)
+        if m and m.group(1).lower() not in got:
+            got[m.group(1).lower()] = m.group(2).strip()
+    if any(p in str(v).lower() for v in got.values() for p in proxy):
+        return {}
+    return {k: v for k, v in got.items() if v}
+
+
+def find_contact(website: str, workers: int = 4) -> dict:
+    """Dig a business's public owner contact: crawl its key sections, extract + rank emails
+    (owner freemail first), tel: phones, socials, and WHOIS registrant. All public data."""
+    ex = Extractor()
+    try:
+        targets = crawl_site(website, limit=8)
+    except Exception:
+        targets = [(None, website)]          # crawl failed → still try the homepage
+    out = ex.extract([u for _, u in targets], concurrency=workers)
+    emails, phones, socials = set(), set(), set()
+    for r in out.results:
+        emails |= set(r.emails)
+        phones |= set(r.phones)
+        socials |= set(r.socials)
+    domain = _registrable(website)
+    classified = [(_email_type(e, domain), e) for e in emails]
+    ranked = sorted(((t, e) for t, e in classified if t != "drop"),
+                    key=lambda te: (_EMAIL_RANK.get(te[0], 9), te[1]))
+    return {"website": website, "domain": domain, "pages": len(out.results),
+            "emails": [{"email": e, "type": t} for t, e in ranked],
+            "phones": sorted(phones), "socials": sorted(socials),
+            "whois": _whois_registrant(domain)}
+
+
+def render_contact(c: dict, fmt: str) -> str:
+    if fmt == "json":
+        return json.dumps(c, indent=2)
+    out = [f"CONTACT: {c['domain']}  ({c['pages']} pages crawled)", "emails:"]
+    out += [f"  {e['email']:34} [{e['type']}]" for e in c["emails"]] or ["  (none found)"]
+    out.append(f"phones:  {', '.join(c['phones']) or '(none published)'}")
+    out.append(f"socials: {', '.join(c['socials'][:6]) or '(none)'}")
+    out.append(f"whois:   {c['whois'] or '(private / proxied)'}")
+    return "\n".join(out)
+
+
 def render_enrich(rows, fmt: str) -> str:
     if fmt == "json":
         return json.dumps(rows, indent=2)
@@ -302,6 +374,7 @@ def main() -> None:
     ap.add_argument("--crawl", metavar="URL", help="batch: from a homepage, follow links into about/contact/team/... sections")
     ap.add_argument("--match", metavar="SUBSTR", help="with --sitemap: keep only URLs containing this substring")
     ap.add_argument("--limit", type=int, default=25, help="cap pages gathered by --sitemap/--crawl (default 25)")
+    ap.add_argument("--find", metavar="URL", help="GTM: dig a business's public owner contact (ranked emails, phones, socials, WHOIS)")
     ap.add_argument("--enrich", metavar="FILE", help="GTM: read a company list (name,website csv) and output an enriched row per company (socials, emails, careers)")
     ap.add_argument("--about", metavar="QUERY", help="batch: rank candidates by relevance to this (e.g. a target name+company) and fetch the most relevant first")
     ap.add_argument("--budget", type=int, help="with --about: fetch only the top-N most relevant candidates (skip the rest — saves the 4-5s/page walled-fetch cost)")
@@ -316,6 +389,11 @@ def main() -> None:
         _enable_trace()
     render_js = True if args.js else "auto"
     ex = Extractor()
+
+    if args.find:  # GTM: dig one business's owner contact
+        print(render_contact(find_contact(args.find, workers=args.workers),
+                             "json" if args.format == "json" else "table"))
+        return
 
     if args.enrich:  # GTM: company list -> enriched rows
         companies = read_targets(args.enrich)

@@ -118,9 +118,11 @@ def meta(html: str) -> dict:
 # Role/generic mailbox locals — not a person, a function. Useful to flag for GTM (you'd
 # personalize outreach differently to sales@ vs a named person).
 _ROLE_LOCALS = frozenset({
-    "info", "support", "sales", "admin", "contact", "hello", "team", "noreply", "no-reply",
-    "donotreply", "help", "jobs", "careers", "career", "billing", "office", "mail", "marketing",
-    "press", "hr", "legal", "abuse", "postmaster", "webmaster", "enquiries", "inquiries", "feedback",
+    "info", "information", "support", "sales", "admin", "contact", "hello", "team", "noreply",
+    "no-reply", "donotreply", "help", "jobs", "careers", "career", "billing", "office", "mail",
+    "marketing", "press", "hr", "legal", "abuse", "postmaster", "webmaster", "enquiries",
+    "inquiries", "enquiry", "inquiry", "feedback", "service", "services", "orders", "accounts",
+    "reception", "scheduling", "dispatch", "estimates", "quotes", "customerservice", "general",
 })
 # Free/consumer mail + big US ISP domains. On a BUSINESS, a freemail address usually means
 # the owner-operator directly (small-mid biz) rather than a corporate mailbox — a high-value
