@@ -21,8 +21,13 @@ from importlib.resources import files
 
 from .osint_value import GTM_SITES, curated
 
+# Bot-wall / challenge markers. If a probe returns one of these, the check is INCONCLUSIVE
+# (None), never a hit — otherwise a WAF's generic 200 page reads as "profile exists" and
+# reports false accounts (e.g. Reddit serves "Please wait for verification" to non-browsers
+# for BOTH real and nonexistent handles). Inconclusive is surfaced in coverage, not dropped.
 _WAF = ("challenge-error-text", "AwsWafIntegration.forceRefreshToken", "perimeterxIdentifiers",
-        "cf-browser-verification")
+        "cf-browser-verification", "Please wait for verification", "Just a moment",
+        "Checking your browser", "Enable JavaScript and cookies to continue")
 _SITES = None
 
 
