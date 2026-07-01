@@ -122,6 +122,15 @@ _ROLE_LOCALS = frozenset({
     "donotreply", "help", "jobs", "careers", "career", "billing", "office", "mail", "marketing",
     "press", "hr", "legal", "abuse", "postmaster", "webmaster", "enquiries", "inquiries", "feedback",
 })
+# Free/consumer mail + big US ISP domains. On a BUSINESS, a freemail address usually means
+# the owner-operator directly (small-mid biz) rather than a corporate mailbox — a high-value
+# GTM signal, not noise. (Not exhaustive; the common ones cover most small-biz sites.)
+_FREEMAIL = frozenset({
+    "gmail.com", "yahoo.com", "hotmail.com", "outlook.com", "aol.com", "icloud.com", "me.com",
+    "protonmail.com", "proton.me", "gmx.com", "mail.com", "live.com", "msn.com", "ymail.com",
+    "comcast.net", "att.net", "verizon.net", "sbcglobal.net", "cox.net", "charter.net",
+    "bellsouth.net", "earthlink.net", "roadrunner.com", "rr.com", "windstream.net",
+})
 _DISPOSABLE = None  # lazy-loaded bundled list (4k domains, from MIT umuterturk/email-verifier)
 
 
@@ -147,9 +156,11 @@ def verify_email(email: str, check_domain: bool = False) -> dict:
         return {"email": email, "valid_syntax": False}
     local, domain = email.rsplit("@", 1)
     base = local.split("+", 1)[0]
+    # ISP subdomains like foo.rr.com / smtp.comcast.net -> treat by their registrable tail
+    freemail = domain in _FREEMAIL or any(domain.endswith("." + f) for f in _FREEMAIL)
     out = {"email": email, "valid_syntax": True, "domain": domain,
            "is_role": base in _ROLE_LOCALS, "is_disposable": domain in _disposable(),
-           "has_alias": "+" in local}
+           "is_freemail": freemail, "has_alias": "+" in local}
     if check_domain:
         import socket
         try:

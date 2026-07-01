@@ -25,6 +25,14 @@ def test_plus_alias_and_role_strip():
     assert v["has_alias"] and v["is_role"]   # alias stripped before role check
 
 
+def test_freemail_flags_owner_operator_addresses():
+    # small-biz owner tells: gmail + ISP domains
+    for e in ["mrcomfortohio@gmail.com", "blairheating@cinci.rr.com", "joe@comcast.net"]:
+        assert verify_email(e)["is_freemail"], e
+    # a corporate domain is NOT freemail
+    assert not verify_email("owner@acmehvac.com")["is_freemail"]
+
+
 def test_bad_syntax():
     for e in ["not-an-email", "a@b", "@nope.com", "spaces in@email.com", ""]:
         assert not verify_email(e)["valid_syntax"], e
