@@ -25,3 +25,9 @@ pith = "pith.cli:main"
 [build-system]
 requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["pith"]
+
+[tool.setuptools.package-data]
+pith = ["disposable_domains.txt"]  # bundled disposable list (MIT, umuterturk/email-verifier)

@@ -115,6 +115,51 @@ def meta(html: str) -> dict:
     return m
 
 
+# Role/generic mailbox locals — not a person, a function. Useful to flag for GTM (you'd
+# personalize outreach differently to sales@ vs a named person).
+_ROLE_LOCALS = frozenset({
+    "info", "support", "sales", "admin", "contact", "hello", "team", "noreply", "no-reply",
+    "donotreply", "help", "jobs", "careers", "career", "billing", "office", "mail", "marketing",
+    "press", "hr", "legal", "abuse", "postmaster", "webmaster", "enquiries", "inquiries", "feedback",
+})
+_DISPOSABLE = None  # lazy-loaded bundled list (4k domains, from MIT umuterturk/email-verifier)
+
+
+def _disposable() -> frozenset:
+    global _DISPOSABLE
+    if _DISPOSABLE is None:
+        try:
+            from importlib.resources import files
+            _DISPOSABLE = frozenset(files("pith").joinpath("disposable_domains.txt").read_text().split())
+        except Exception:
+            _DISPOSABLE = frozenset()
+    return _DISPOSABLE
+
+
+def verify_email(email: str, check_domain: bool = False) -> dict:
+    """Deterministic email quality signals — no SMTP probe, no external API, no LLM.
+    Reports: valid_syntax, is_role (generic mailbox), is_disposable (throwaway domain),
+    has_alias (plus-tag). `check_domain=True` adds a stdlib DNS resolve (network) to catch
+    dead/typo domains. NOT a deliverability check — real SMTP verification is unreliable
+    (catch-all / greylisting) and risks sender reputation, so it's deliberately omitted."""
+    email = (email or "").strip().lower()
+    if not _EMAIL.fullmatch(email):
+        return {"email": email, "valid_syntax": False}
+    local, domain = email.rsplit("@", 1)
+    base = local.split("+", 1)[0]
+    out = {"email": email, "valid_syntax": True, "domain": domain,
+           "is_role": base in _ROLE_LOCALS, "is_disposable": domain in _disposable(),
+           "has_alias": "+" in local}
+    if check_domain:
+        import socket
+        try:
+            socket.getaddrinfo(domain, None)
+            out["domain_resolves"] = True
+        except Exception:
+            out["domain_resolves"] = False
+    return out
+
+
 def enrich(markdown: str, html: str) -> dict:
     """Everything deterministic, in one call. markdown feeds contact scan (clean text);
     html feeds structured/meta (needs the raw tags)."""
