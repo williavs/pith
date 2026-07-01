@@ -1,0 +1,9 @@
+rank,company,website,fit_score,grade,framework,responsive,domain_age_years,careers,github,linkedin,twitter,email_primary,emails
+1,Stripe,https://stripe.com,7,A,Next.js,True,31,True,https://github.com/stripe,https://www.linkedin.com/company/stripe,https://twitter.com/stripe,accommodations@stripe.com,accommodations@stripe.com; jane.diaz@stripe.com; candidatefeedback-applications@stripe.com; careers@stripe.com; sales@stripe.com
+2,Linear,https://linear.app,6,A,Next.js,True,,True,https://github.com/linear,,https://twitter.com/linear,sales@linear.app,sales@linear.app; hello@linear.app
+3,Vercel,https://vercel.com,5,A,Next.js,True,27,True,https://github.com/vercel,https://linkedin.com/company/vercel,https://x.com/vercel,,
+4,Retool,https://retool.com,5,A,Next.js,True,29,True,,,https://x.com/retool,support@retool.com,support@retool.com
+5,Notion,https://notion.so,4,A,Next.js,True,11,True,,https://www.linkedin.com/company/notionhq,https://twitter.com/NotionHQ,,
+6,Airtable,https://airtable.com,4,A,Next.js,True,23,True,,https://linkedin.com/company/airtable,https://twitter.com/airtable,,
+7,Figma,https://figma.com,2,A,Next.js,True,27,False,,https://www.linkedin.com/company/figma,https://x.com/figma,,
+8,Ramp,https://ramp.com,1,A,Next.js,True,32,False,,https://www.linkedin.com/company/ramp,,,
