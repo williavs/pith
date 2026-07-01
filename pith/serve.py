@@ -123,6 +123,11 @@ def _news(body):
     return {"count": len(items), "items": items}
 
 
+def _jobs(body):
+    from .jobs import jobs_search
+    return jobs_search(_str(body, "company"), _str(body, "domain"))
+
+
 # path -> (handler, heavy?). heavy handlers do network fetches and go through the gate.
 _ROUTES = {
     "/extract":      (_extract, True),
@@ -134,6 +139,7 @@ _ROUTES = {
     "/gravatar":     (_gravatar, True),    # email -> public accounts pivot
     "/phone":        (_phone, False),      # offline phone intelligence
     "/news":         (_news, True),        # keyless buyer-intent news search
+    "/jobs":         (_jobs, True),        # keyless job-board company intel
 }
 
 
