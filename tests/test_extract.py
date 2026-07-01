@@ -1,6 +1,35 @@
 """Per-extractor precision/recall — every filter must keep the real thing AND drop the junk.
 Each test names KEEP cases (recall: must not be cut) and DROP cases (precision: must not leak)."""
-from pith.extract import emails, phones, socials, structured, meta, enrich
+from pith.extract import emails, phones, socials, structured, meta, enrich, cfemails, _decode_cfemail
+
+
+def _cf_encode(email, key=0x42):
+    return f"{key:02x}" + "".join(f"{ord(c) ^ key:02x}" for c in email)
+
+
+def test_cfemail_decode_roundtrip():
+    for e in ["owner@acmehvac.com", "jane.doe@small-biz.co.uk", "info@x.io"]:
+        assert _decode_cfemail(_cf_encode(e)) == e
+
+
+def test_cfemails_recovers_from_html():
+    html = f'<a class="__cf_email__" data-cfemail="{_cf_encode("boss@hvac.com", 0x1f)}">[email&#160;protected]</a>'
+    assert cfemails(html) == ["boss@hvac.com"]
+
+
+def test_cfemail_rejects_garbage():
+    assert _decode_cfemail("zzzz") == "" and _decode_cfemail("00") == ""
+
+
+def test_enrich_recovers_cloudflare_hidden_email():
+    # the page shows NO plaintext email — only the cloudflare-obfuscated one
+    html = f'<span>Email us:</span><a class="__cf_email__" data-cfemail="{_cf_encode("owner@shop.com")}">[email protected]</a>'
+    d = enrich("", html)
+    assert "owner@shop.com" in d["emails"]
+
+
+def test_entity_encoded_email_recovered():
+    assert "john@acme.com" in emails("reach john&#64;acme&#46;com anytime")  # &#64;=@ &#46;=.
 
 
 # ---- emails: keep real contacts, drop trackers/placeholders/asset filenames ----

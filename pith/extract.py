@@ -6,8 +6,28 @@ a missing one, so every extractor filters hard.
 """
 from __future__ import annotations
 
+import html as _htmlmod
 import json
 import re
+
+# Cloudflare "Email Address Obfuscation" replaces mailto: with data-cfemail="HEX". The email
+# is XOR-encoded: first byte is the key, each following byte XOR key -> a char. Exact decode,
+# no guessing — recovers emails Cloudflare hides (very common on small-biz sites).
+_CFEMAIL = re.compile(r'data-cfemail=["\']([0-9a-fA-F]{8,})["\']')
+
+
+def _decode_cfemail(hexstr: str) -> str:
+    try:
+        key = int(hexstr[:2], 16)
+        out = "".join(chr(int(hexstr[i:i + 2], 16) ^ key) for i in range(2, len(hexstr), 2))
+        return out if _EMAIL.fullmatch(out) else ""
+    except (ValueError, IndexError):
+        return ""
+
+
+def cfemails(html: str) -> list[str]:
+    """Emails Cloudflare obfuscated behind data-cfemail — recovered by exact XOR decode."""
+    return sorted({e for e in (_decode_cfemail(m) for m in _CFEMAIL.findall(html or "")) if e})
 
 _EMAIL = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,24}")
 # junk that matches the email shape but isn't a real contact: error trackers, placeholders,
@@ -47,7 +67,8 @@ _META = [("og:title", "title"), ("og:description", "description"), ("og:site_nam
 
 
 def emails(text: str) -> list[str]:
-    return sorted({e for e in _EMAIL.findall(text or "")
+    text = _htmlmod.unescape(text or "")  # decode &#64;/&commat;/&#46; entity-encoded emails first
+    return sorted({e for e in _EMAIL.findall(text)
                    if not any(j in e.lower() for j in _EMAIL_JUNK)})
 
 
@@ -188,8 +209,14 @@ def enrich(markdown: str, html: str) -> dict:
     for e in st:  # fold schema.org telephones into phones
         if e.get("telephone"):
             tel.append(str(e["telephone"]))
+    # emails: visible/entity-encoded + Cloudflare-obfuscated + any in schema.org
+    em = set(emails(src)) | set(cfemails(html))
+    for e in st:
+        if e.get("email"):
+            em |= set(emails(str(e["email"])))
+    em = {e for e in em if not any(j in e.lower() for j in _EMAIL_JUNK)}
     return {
-        "emails": emails(src),
+        "emails": sorted(em),
         "phones": sorted(set(tel)),
         "socials": socials(src),
         "structured": st,
