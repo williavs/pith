@@ -103,6 +103,82 @@ def gate(targets, query: str, budget: int | None = None, snippets: dict | None =
     return ranked[:budget] if budget else ranked
 
 
+# --- GTM company enrichment: bare company list -> structured rows a rep can act on ---
+
+def _registrable(url: str) -> str:
+    from urllib.parse import urlsplit
+    host = urlsplit(url if "//" in url else "//" + url).netloc.lower().split(":")[0]
+    parts = host.split(".")
+    return ".".join(parts[-2:]) if len(parts) >= 2 else host
+
+
+def _name_toks(name: str) -> list[str]:
+    return [t for t in re.split(r"[^a-z0-9]+", name.lower()) if len(t) > 2]
+
+
+def _company_social(socials, name: str, host_key: str):
+    """Pick the company's own profile on a platform: the one whose handle matches the company
+    name. Returns None rather than guess — avoids the personal-account false positive
+    (github.com/1rgs for 'Ramp')."""
+    toks = _name_toks(name)
+    for s in socials:
+        if host_key not in s.lower():
+            continue
+        handle = s.rstrip("/").rsplit("/", 1)[-1].lower()
+        if any(t in handle or handle in t for t in toks):
+            return s
+    return None
+
+
+def _company_emails(emails, website: str) -> list[str]:
+    """Keep only emails on the company's own domain — a company-domain address is a real
+    contact; an off-domain one (kevin@encom.com on linear.app) is demo/third-party noise."""
+    dom = _registrable(website)
+    return [e for e in emails if e.split("@")[-1].lower().endswith(dom)]
+
+
+def enrich_company(name: str, website: str, workers: int = 4) -> dict:
+    """One pith pass over a company's key sections -> a GTM-ready row. All browser/tier/
+    concurrency machinery hidden; caller just gets structured, company-matched data."""
+    ex = Extractor()
+    targets = crawl_site(website, limit=6)
+    out = ex.extract([u for _, u in targets], concurrency=workers, render_js="auto")
+    socials, emails = set(), set()
+    for r in out.results:
+        socials |= set(r.socials)
+        emails |= set(r.emails)
+    urls = [r.url for r in out.results]
+    return {
+        "company": name, "website": website, "pages": len(out.results),
+        "linkedin": _company_social(socials, name, "linkedin.com/company"),
+        "github": _company_social(socials, name, "github.com"),
+        "twitter": _company_social(socials, name, "twitter.com") or _company_social(socials, name, "x.com"),
+        "emails": _company_emails(emails, website),
+        "careers": any("career" in u.lower() or "/job" in u.lower() for u in urls),
+    }
+
+
+def render_enrich(rows, fmt: str) -> str:
+    if fmt == "json":
+        return json.dumps(rows, indent=2)
+    if fmt == "csv":
+        import csv as _csv
+        import io
+        cols = ["company", "website", "pages", "linkedin", "github", "twitter", "careers", "emails"]
+        buf = io.StringIO()
+        w = _csv.DictWriter(buf, fieldnames=cols, extrasaction="ignore")
+        w.writeheader()
+        for r in rows:
+            w.writerow({**r, "emails": ";".join(r["emails"])})
+        return buf.getvalue().rstrip()
+    # table
+    out = [f"{'company':14} {'pg':>2} {'careers':7} {'linkedin':30} emails"]
+    for r in rows:
+        out.append(f"{r['company'][:14]:14} {r['pages']:>2} {'yes' if r['careers'] else '-':7} "
+                   f"{(r['linkedin'] or '-')[:30]:30} {','.join(r['emails'])[:40]}")
+    return "\n".join(out)
+
+
 def _section_links(seed: str, html: str, sections, limit: int) -> list[tuple[str | None, str]]:
     """Pure: from a homepage's HTML, keep same-domain links whose path hits a section.
     Seed first, then matches in document order, deduped, capped. (Tested offline.)"""
@@ -227,9 +303,10 @@ def main() -> None:
     ap.add_argument("--crawl", metavar="URL", help="batch: from a homepage, follow links into about/contact/team/... sections")
     ap.add_argument("--match", metavar="SUBSTR", help="with --sitemap: keep only URLs containing this substring")
     ap.add_argument("--limit", type=int, default=25, help="cap pages gathered by --sitemap/--crawl (default 25)")
+    ap.add_argument("--enrich", metavar="FILE", help="GTM: read a company list (name,website csv) and output an enriched row per company (socials, emails, careers)")
     ap.add_argument("--about", metavar="QUERY", help="batch: rank candidates by relevance to this (e.g. a target name+company) and fetch the most relevant first")
     ap.add_argument("--budget", type=int, help="with --about: fetch only the top-N most relevant candidates (skip the rest — saves the 4-5s/page walled-fetch cost)")
-    ap.add_argument("--format", choices=["md", "json", "table"], default="md", help="batch output format (default md)")
+    ap.add_argument("--format", choices=["md", "json", "table", "csv"], default="md", help="output format (csv/json for --enrich; default md)")
     ap.add_argument("--workers", type=int, default=1, help="batch: parallel fetches (default 1)")
     ap.add_argument("--full", action="store_true", help="include full page markdown")
     ap.add_argument("--js", action="store_true", help="force a real browser (JS-rendered / bot-protected pages)")
@@ -240,6 +317,14 @@ def main() -> None:
         _enable_trace()
     render_js = True if args.js else "auto"
     ex = Extractor()
+
+    if args.enrich:  # GTM: company list -> enriched rows
+        companies = read_targets(args.enrich)
+        if not companies:
+            ap.error(f"no companies found in {args.enrich}")
+        rows = [enrich_company(name or url, url, workers=args.workers) for name, url in companies]
+        print(render_enrich(rows, "table" if args.format == "md" else args.format))
+        return
 
     if args.sitemap or args.crawl or args.from_file:
         if args.sitemap:

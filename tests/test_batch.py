@@ -1,8 +1,37 @@
 """Offline tests for the list/batch feature — no network."""
 import json
 
-from pith.cli import read_targets, run_batch, render, _section_links, score_relevance, gate
+from pith.cli import (read_targets, run_batch, render, _section_links, score_relevance, gate,
+                      _company_social, _company_emails, _registrable, render_enrich)
 from pith.core import Result, ExtractResult
+
+
+def test_company_emails_keeps_on_domain_drops_demo():
+    # kevin@encom.com is Linear's demo data; hello@linear.app is the real contact
+    got = _company_emails(["hello@linear.app", "kevin@encom.com", "support@other.io"], "https://linear.app")
+    assert got == ["hello@linear.app"]
+
+
+def test_registrable_domain():
+    assert _registrable("https://www.linear.app/careers") == "linear.app"
+    assert _registrable("https://mail.google.com") == "google.com"
+
+
+def test_company_social_prefers_name_match_skips_personal():
+    socials = ["https://github.com/1rgs", "https://github.com/vercel", "https://linkedin.com/company/vercel"]
+    # 'Vercel' -> github.com/vercel (name match), NOT the personal 1rgs
+    assert _company_social(socials, "Vercel", "github.com") == "https://github.com/vercel"
+    assert _company_social(socials, "Vercel", "linkedin.com/company") == "https://linkedin.com/company/vercel"
+    # 'Ramp' has only a personal github -> return None rather than the false positive
+    assert _company_social(["https://github.com/1rgs"], "Ramp", "github.com") is None
+
+
+def test_render_enrich_csv():
+    rows = [{"company": "Acme", "website": "https://acme.com", "pages": 3, "linkedin": "https://linkedin.com/company/acme",
+             "github": None, "twitter": None, "careers": True, "emails": ["hi@acme.com"]}]
+    csv_out = render_enrich(rows, "csv")
+    assert "company,website,pages" in csv_out.splitlines()[0]
+    assert "Acme,https://acme.com,3" in csv_out and "hi@acme.com" in csv_out
 
 
 def test_score_relevance_counts_query_tokens():
