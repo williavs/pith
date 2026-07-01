@@ -204,16 +204,22 @@ def find_contact(website: str, workers: int = 4) -> dict:
     except Exception:
         targets = [(None, website)]          # crawl failed → still try the homepage
     out = ex.extract([u for _, u in targets], concurrency=workers)
-    emails, phones, socials = set(), set(), set()
+    emails, phones, socials, people = set(), set(), set(), {}
     for r in out.results:
         emails |= set(r.emails)
         phones |= set(r.phones)
         socials |= set(r.socials)
+        for e in r.structured:  # schema.org Person -> a named contact with a title
+            types = e.get("@type") if isinstance(e.get("@type"), list) else [e.get("@type")]
+            name = e.get("name")
+            if "Person" in types and name and name not in people:
+                people[name] = e.get("jobTitle", "")
     domain = _registrable(website)
     classified = [(_email_type(e, domain), e) for e in emails]
     ranked = sorted(((t, e) for t, e in classified if t != "drop"),
                     key=lambda te: (_EMAIL_RANK.get(te[0], 9), te[1]))
     return {"website": website, "domain": domain, "pages": len(out.results),
+            "people": [{"name": n, "title": t} for n, t in people.items()],
             "emails": [{"email": e, "type": t} for t, e in ranked],
             "phones": sorted(phones), "socials": sorted(socials),
             "whois": _whois_registrant(domain)}
@@ -222,7 +228,11 @@ def find_contact(website: str, workers: int = 4) -> dict:
 def render_contact(c: dict, fmt: str) -> str:
     if fmt == "json":
         return json.dumps(c, indent=2)
-    out = [f"CONTACT: {c['domain']}  ({c['pages']} pages crawled)", "emails:"]
+    out = [f"CONTACT: {c['domain']}  ({c['pages']} pages crawled)"]
+    if c.get("people"):
+        out.append("people:")
+        out += [f"  {p['name']}" + (f" — {p['title']}" if p['title'] else "") for p in c["people"]]
+    out.append("emails:")
     out += [f"  {e['email']:34} [{e['type']}]" for e in c["emails"]] or ["  (none found)"]
     out.append(f"phones:  {', '.join(c['phones']) or '(none published)'}")
     out.append(f"socials: {', '.join(c['socials'][:6]) or '(none)'}")

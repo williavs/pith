@@ -48,9 +48,22 @@ def test_find_contact_survives_crawl_failure(monkeypatch):
 
 
 def test_render_contact_json_and_empty():
-    c = {"website": "x", "domain": "x.com", "pages": 0, "emails": [], "phones": [], "socials": [], "whois": {}}
+    c = {"website": "x", "domain": "x.com", "pages": 0, "people": [], "emails": [], "phones": [], "socials": [], "whois": {}}
     assert '"domain": "x.com"' in render_contact(c, "json")
     assert "(none found)" in render_contact(c, "table")
+
+
+def test_find_contact_surfaces_schema_person(monkeypatch):
+    from pith import cli
+    monkeypatch.setattr(cli, "crawl_site", lambda w, limit=8: [(None, w)])
+    monkeypatch.setattr(cli, "_whois_registrant", lambda d: {})
+    r = Result(url="https://acme.com", structured=[
+        {"@type": "Person", "name": "Jeff Smith", "jobTitle": "Owner"},
+        {"@type": "Organization", "name": "Acme"}])
+    monkeypatch.setattr(cli, "Extractor", lambda: type("E", (), {
+        "extract": lambda self, urls, **kw: ExtractResult(results=[r])})())
+    c = cli.find_contact("https://acme.com")
+    assert c["people"] == [{"name": "Jeff Smith", "title": "Owner"}]
 
 
 def test_business_urls_filters_dedups_limits():
