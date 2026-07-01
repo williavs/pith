@@ -18,6 +18,9 @@ js = ["scrapling[fetchers]>=0.4", "curl_cffi>=0.7"]
 docs = ["markitdown[all]>=0.0.1"]
 # PDFs only (lighter than [docs] if that's all you need):
 pdf = ["pymupdf>=1.24"]
+osint = [
+    "phonenumbers>=9.0.33",
+]
 
 [project.scripts]
 pith = "pith.cli:main"

@@ -13,3 +13,4 @@ benchmarks/go/pithbench
 .claude-peers-agent
 benchmarks/dossier_output.md
 benchmarks/dossier.html
+examples/datatables/index.html

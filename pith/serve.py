@@ -105,6 +105,16 @@ def _verify(body):
     return verify_email(_str(body, "email"))
 
 
+def _gravatar(body):
+    from .gravatar import gravatar_profile
+    return gravatar_profile(_str(body, "email"))
+
+
+def _phone(body):
+    from .phoneintel import phone_intel
+    return phone_intel(_str(body, "number"), region=body.get("region"))
+
+
 # path -> (handler, heavy?). heavy handlers do network fetches and go through the gate.
 _ROUTES = {
     "/extract":      (_extract, True),
@@ -113,6 +123,8 @@ _ROUTES = {
     "/directory":    (_directory, True),
     "/profiles":     (_profiles, True),
     "/verify-email": (_verify, False),
+    "/gravatar":     (_gravatar, True),    # email -> public accounts pivot
+    "/phone":        (_phone, False),      # offline phone intelligence
 }
 
 
@@ -141,7 +153,7 @@ class Handler(BaseHTTPRequestHandler):
         if urlparse(self.path).path == "/health":
             self._json(200, {"status": "ok", "service": "pith", "version": __version__, "max_concurrency": _MAX})
         else:
-            self._json(404, {"error": "GET /health; POST /extract /contact /intel /directory /profiles /verify-email"})
+            self._json(404, {"error": "GET /health; POST /extract /contact /intel /directory /profiles /verify-email /gravatar /phone"})
 
     def do_POST(self):
         t = time.time()
