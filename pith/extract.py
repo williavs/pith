@@ -390,9 +390,19 @@ def verify_email(email: str, check_domain: bool = False) -> dict:
     return out
 
 
-def enrich(markdown: str, html: str) -> dict:
+def _email_label(e: str) -> dict:
+    """Domain-independent email signals available at page level (role/freemail). The full
+    owner/person/company typing needs the business domain — that's a contact-aggregation job."""
+    local, _, domain = e.lower().partition("@")
+    return {"role": local.split("+", 1)[0] in _ROLE_LOCALS,
+            "freemail": domain in _FREEMAIL or any(domain.endswith("." + f) for f in _FREEMAIL)}
+
+
+def enrich(markdown: str, html: str, source_url: str = "") -> dict:
     """Everything deterministic, in one call. markdown feeds contact scan (clean text);
-    html feeds structured/meta (needs the raw tags)."""
+    html feeds structured/meta (needs the raw tags). `source_url` stamps provenance onto the
+    returned `facts` (evidence model) — every datum knows which page + method produced it."""
+    from .evidence import Source, aggregate
     src = (markdown or "") + "\n" + (html or "")
     st = structured(html)
     tel = set(phones(html))
@@ -407,11 +417,38 @@ def enrich(markdown: str, html: str) -> dict:
         if isinstance(v, str):                 # skip non-string schema email values
             em |= set(emails(v))
     em = {e for e in em if not _junk_email(e)}
+    soc = socials(src)
+    adr = addresses(html)
+
+    # provenance: one observation per (value, extraction method) at this url; aggregate() unions
+    def _src(method):
+        return Source(source_url, method)
+    obs = []
+    obs += [(e, "email", _src("text"), _email_label(e)) for e in emails(src) if not _junk_email(e)]
+    obs += [(e, "email", _src("cfemail"), _email_label(e)) for e in cfemails(html) if not _junk_email(e)]
+    obs += [(e, "email", _src("atdot"), _email_label(e)) for e in atdot_emails(src) if not _junk_email(e)]
+    for e in st:
+        v = e.get("email")
+        if isinstance(v, str):
+            obs += [(x, "email", _src("schema.org"), _email_label(x)) for x in emails(v) if not _junk_email(x)]
+    obs += [(p, "phone", _src("text"), {}) for p in phones(html)]
+    for e in st:
+        t = e.get("telephone")
+        if isinstance(t, (str, int)):
+            obs += [(p, "phone", _src("schema.org"), {}) for p in phones(str(t))]
+    obs += [(s, "social", _src("text"), {}) for s in soc]
+    for e in st:                               # schema.org sameAs are the subject's OWN links (authoritative)
+        sa = e.get("sameAs")
+        if sa:
+            obs += [(str(u), "social", _src("schema.org"), {}) for u in (sa if isinstance(sa, list) else [sa]) if _is_profile(str(u))]
+    obs += [(a, "address", _src("schema.org"), {}) for a in adr]
+
     return {
         "emails": sorted(em),
         "phones": sorted(tel),
-        "socials": socials(src),
-        "addresses": addresses(html),
+        "socials": soc,
+        "addresses": adr,
         "structured": st,
         "meta": meta(html),
+        "facts": aggregate(obs),               # evidence model: value + sources(url,method) + corroboration
     }

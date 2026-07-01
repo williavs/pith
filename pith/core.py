@@ -43,6 +43,7 @@ class Result:
     addresses: list[str] = field(default_factory=list)  # business street addresses (schema.org)
     structured: list[dict] = field(default_factory=list)  # schema.org Person/Organization entities
     meta: dict = field(default_factory=dict)           # OpenGraph + author/date
+    facts: list = field(default_factory=list)          # evidence model: Fact(value, sources[url+method], corroboration)
 
 
 @dataclass
@@ -295,10 +296,11 @@ class Extractor:
             if full_content:
                 r.full_content = body
             r.excerpts = [body]
-            det = _enrich(body, html)  # deterministic structured data — no LLM
+            det = _enrich(body, html, source_url=url)  # deterministic structured data — no LLM
             r.emails, r.phones, r.socials = det["emails"], det["phones"], det["socials"]
             r.addresses = det.get("addresses", [])
             r.structured, r.meta = det["structured"], det["meta"]
+            r.facts = det.get("facts", [])   # evidence model: each datum with its source URL + method
             log.info("url_done", extra={"url": url, "ms": _ms(t), "bytes": len(body),
                                         "emails": len(r.emails), "socials": len(r.socials), "ok": True})
             return r

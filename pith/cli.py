@@ -224,6 +224,66 @@ def _whois_registrant(domain: str) -> dict:
     return {k: v for k, v in got.items() if v}
 
 
+def _name_like(local: str) -> bool:
+    """A local part that looks like a real person: firstname.lastname / first_last (two short
+    alpha tokens). NOT a functional mailbox word (accommodations, candidatefeedback)."""
+    return bool(re.match(r"^[a-z]{2,12}[._-][a-z]{2,12}$", local.split("+", 1)[0]))
+
+
+def _email_type_scoped(email: str, domain: str) -> str:
+    """Dot-boundary domain match + a 'functional' bucket for on-domain mailboxes that are
+    neither a known role nor a real name (accommodations@) — so a recipe preferring people
+    doesn't grab them. Types: owner | person | role | functional | external | drop."""
+    from .extract import verify_email
+    v = verify_email(email)
+    if not v["valid_syntax"] or v["is_disposable"]:
+        return "drop"
+    if v["is_freemail"]:
+        return "owner"                                   # freemail on a business = owner-operator
+    local = email.split("@")[0].lower()
+    d = email.split("@")[-1].lower()
+    if d == domain or d.endswith("." + domain):
+        if v["is_role"]:
+            return "role"
+        return "person" if _name_like(local) else "functional"
+    return "external"
+
+
+def contact_evidence(website: str, workers: int = 4) -> dict:
+    """EVIDENCE (not answers) for a business's public contact footprint. Crawls key pages,
+    unions every extracted Fact across them (corroboration = distinct source pages), types
+    emails by the business domain, folds in the WHOIS registrant as another source, and reports
+    coverage (what was crawled / what failed). Returns Fact objects + Coverage — NO 'primary'
+    pick, no scalar. Apply pith.recipes (owner_email, rank_phones) with your intent on top."""
+    from .evidence import Source, Coverage, aggregate
+    domain = _registrable(website)
+    ex = Extractor()
+    try:
+        targets = crawl_site(website, limit=8)
+    except Exception:
+        targets = [(None, website)]
+    urls = [u for _, u in targets]
+    out = ex.extract(urls, concurrency=workers)
+    cov = Coverage(checked=urls, ok=[r.url for r in out.results],
+                   failed=[{"url": e.get("url"), "error": str(e.get("error", ""))[:80]}
+                           for e in (out.errors or [])])
+    # union every page's facts -> cross-page corroboration (distinct source URLs)
+    obs = [(f.value, f.kind, s, f.labels) for r in out.results for f in r.facts for s in f.sources]
+    # WHOIS registrant contact = another independent source
+    whois = _whois_registrant(domain)
+    if whois.get("email"):
+        obs.append((whois["email"], "email", Source(f"whois:{domain}", "whois"), {}))
+    if whois.get("phone"):
+        from .extract import _canon_phone
+        obs.append((_canon_phone(whois["phone"]) or whois["phone"], "phone", Source(f"whois:{domain}", "whois"), {}))
+    facts = aggregate(obs)
+    for f in facts:                                       # domain-aware email typing (transparent label)
+        if f.kind == "email":
+            f.labels["email_type"] = _email_type_scoped(f.value, domain)
+    facts = [f for f in facts if not (f.kind == "email" and f.labels.get("email_type") == "drop")]
+    return {"domain": domain, "facts": facts, "coverage": cov, "whois": whois}
+
+
 def find_contact(website: str, workers: int = 4) -> dict:
     """Dig a business's public owner contact: crawl its key sections, extract + rank emails
     (owner freemail first), tel: phones, socials, and WHOIS registrant. All public data."""
