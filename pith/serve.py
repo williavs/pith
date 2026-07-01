@@ -116,6 +116,13 @@ def _phone(body):
     return phone_intel(_str(body, "number"), region=body.get("region"))
 
 
+def _news(body):
+    from .news import news_search
+    items = news_search(_str(body, "company"), qualifier=body.get("qualifier"),
+                        window_days=_int(body, "window_days", 90, lo=1, hi=365))
+    return {"count": len(items), "items": items}
+
+
 # path -> (handler, heavy?). heavy handlers do network fetches and go through the gate.
 _ROUTES = {
     "/extract":      (_extract, True),
@@ -126,6 +133,7 @@ _ROUTES = {
     "/verify-email": (_verify, False),
     "/gravatar":     (_gravatar, True),    # email -> public accounts pivot
     "/phone":        (_phone, False),      # offline phone intelligence
+    "/news":         (_news, True),        # keyless buyer-intent news search
 }
 
 

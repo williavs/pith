@@ -59,5 +59,5 @@ for r in out.results:
 
 Everything else — `contact_evidence` (+ `pith.recipes`), `website_intel`, `enrich_company`,
 `directory_search`, `enumerate_profiles`, `gravatar_profile`, `phone_intel`, `verify_email` —
-is a one-call function returning plain data. Or run `python -m pith.serve` and hit the same
+is a one-call function returning plain data. `news_search(company)` does keyless buyer-intent news search (no Tavily). Or run `python -m pith.serve` and hit the same
 capabilities over HTTP from any language.
