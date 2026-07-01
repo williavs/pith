@@ -32,6 +32,48 @@ def test_entity_encoded_email_recovered():
     assert "john@acme.com" in emails("reach john&#64;acme&#46;com anytime")  # &#64;=@ &#46;=.
 
 
+def test_cfemail_from_clickable_link_fragment():
+    from pith.extract import cfemails
+    html = f'<a href="/cdn-cgi/l/email-protection#{_cf_encode("boss@hvac.com", 0x2a)}">email</a>'
+    assert cfemails(html) == ["boss@hvac.com"]
+
+
+def test_atdot_bracketed_only():
+    from pith.extract import atdot_emails
+    assert atdot_emails("sales [at] acme [dot] com") == ["sales@acme.com"]
+    assert atdot_emails("bob (at) foo (dot) org") == ["bob@foo.org"]
+    # bare lowercase 'at'/'dot' in prose must NOT fabricate an email
+    assert atdot_emails("meet me at the dot for lunch") == []
+    assert atdot_emails("look at that dotcom bubble") == []
+
+
+def test_phone_normalizer_recovers_obfuscated():
+    # nbsp, unicode hyphen (U+2011), fullwidth digits — all should still yield the phone
+    assert "415 555 2671" in phones("Call 415 555 2671")
+    assert "415-555-2671" in phones("Call 415‑555‑2671")
+
+
+def test_structured_drops_review_author_keeps_owner():
+    html = ('<script type="application/ld+json">{"@type":"Product","name":"AC",'
+            '"review":{"@type":"Review","author":{"@type":"Person","name":"Karen W"}}}</script>'
+            '<script type="application/ld+json">{"@type":"Organization","name":"Acme",'
+            '"founder":{"@type":"Person","name":"Jeff Smith","jobTitle":"Owner"}}</script>')
+    names = [e.get("name") for e in structured(html)]
+    assert "Karen W" not in names          # review author -> dropped (precision)
+    assert "Jeff Smith" in names           # founder -> kept
+
+
+def test_address_assembly_and_gate():
+    from pith.extract import addresses
+    html = ('<script type="application/ld+json">{"@type":"LocalBusiness","name":"Acme HVAC",'
+            '"address":{"@type":"PostalAddress","streetAddress":"123 Main St",'
+            '"addressLocality":"Columbus","addressRegion":"OH","postalCode":"43004"}}</script>')
+    assert addresses(html) == ["123 Main St, Columbus OH 43004"]
+    # zip-only must NOT emit (>=2 component gate)
+    thin = '<script type="application/ld+json">{"@type":"Organization","name":"X","address":{"@type":"PostalAddress","postalCode":"43004"}}</script>'
+    assert addresses(thin) == []
+
+
 # ---- emails: keep real contacts, drop trackers/placeholders/asset filenames ----
 
 def test_emails_keeps_real():

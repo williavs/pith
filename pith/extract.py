@@ -9,27 +9,73 @@ from __future__ import annotations
 import html as _htmlmod
 import json
 import re
+import unicodedata
+
+# normalize invisibles/unicode BEFORE any phone/email regex — these silently break \d runs.
+_DEL = dict.fromkeys(map(ord, "​‌‍‎‏⁠﻿­᠎"), None)  # ZW + soft-hyphen + word-joiner + LRM/RLM
+_MAP = {0x00a0: 0x20, 0x2007: 0x20, 0x202f: 0x20}          # nbsp variants -> space
+_MAP.update({c: 0x2d for c in range(0x2010, 0x2016)})      # unicode hyphens -> '-'
+_MAP[0x2212] = 0x2d                                        # minus sign -> '-'
+
+
+def _clean(t: str) -> str:
+    """Fold away obfuscation that breaks digit/char runs: entities, zero-width/soft-hyphen,
+    nbsp, unicode hyphens, fullwidth digits, Arabic-Indic digits. No fabrication."""
+    t = _htmlmod.unescape(t or "").translate(_DEL).translate(_MAP)
+    t = unicodedata.normalize("NFKC", t)                  # fullwidth ４１５ -> 415
+    return "".join(str(unicodedata.digit(c)) if unicodedata.category(c) == "Nd" and not c.isascii() else c
+                   for c in t)
 
 # Cloudflare "Email Address Obfuscation" replaces mailto: with data-cfemail="HEX". The email
 # is XOR-encoded: first byte is the key, each following byte XOR key -> a char. Exact decode,
 # no guessing — recovers emails Cloudflare hides (very common on small-biz sites).
-_CFEMAIL = re.compile(r'data-cfemail=["\']([0-9a-fA-F]{8,})["\']')
+_CFEMAIL = re.compile(r'data-cfemail=["\']([0-9a-fA-F]{6,})["\']')
+_CFEMAIL_H = re.compile(r'/cdn-cgi/l/email-protection#([0-9a-fA-F]{6,})')  # Cloudflare-rewritten mailto links
 
 
 def _decode_cfemail(hexstr: str) -> str:
+    if len(hexstr) % 2 or len(hexstr) < 6:  # even-length + >=6 hex floor
+        return ""
     try:
         key = int(hexstr[:2], 16)
         out = "".join(chr(int(hexstr[i:i + 2], 16) ^ key) for i in range(2, len(hexstr), 2))
-        return out if _EMAIL.fullmatch(out) else ""
-    except (ValueError, IndexError):
+    except ValueError:
         return ""
+    if not out.isascii():                   # non-ascii => not the protected email
+        return ""
+    out = out.lower()
+    if not _EMAIL.fullmatch(out) or any(j in out for j in _EMAIL_JUNK):  # junk gate, parity with emails()
+        return ""
+    return out
+
+
+# bracketed at/dot only — "sales [at] acme [dot] com". The bare lowercase form ("meet me at
+# the dot") is a verified prose false-positive source, so it's deliberately NOT matched.
+_ATDOT = re.compile(
+    r'([A-Za-z0-9._%+\-]+)\s*[\[({]\s*at\s*[\])}]\s*'
+    r'([A-Za-z0-9\-]+(?:\s*[\[({]\s*dot\s*[\])}]\s*[A-Za-z0-9\-]+)*)\s*'
+    r'[\[({]\s*dot\s*[\])}]\s*([A-Za-z]{2,18})', re.I)
+
+
+def atdot_emails(text: str) -> list[str]:
+    """Recover emails obfuscated as 'name [at] domain [dot] com' (bracketed markers only)."""
+    out = set()
+    for m in _ATDOT.finditer(_clean(text)):
+        mid = re.sub(r'\s*[\[({]\s*dot\s*[\])}]\s*', '.', m.group(2), flags=re.I)
+        cand = f"{m.group(1)}@{mid}.{m.group(3)}".lower()
+        if _EMAIL.fullmatch(cand) and not any(j in cand for j in _EMAIL_JUNK):
+            out.add(cand)
+    return sorted(out)
 
 
 def cfemails(html: str) -> list[str]:
-    """Emails Cloudflare obfuscated behind data-cfemail — recovered by exact XOR decode."""
-    return sorted({e for e in (_decode_cfemail(m) for m in _CFEMAIL.findall(html or "")) if e})
+    """Emails Cloudflare obfuscated behind data-cfemail or /cdn-cgi/l/email-protection# links —
+    recovered by exact XOR decode (first hex byte is the key)."""
+    html = html or ""
+    blobs = set(_CFEMAIL.findall(html)) | set(_CFEMAIL_H.findall(html))
+    return sorted({e for e in (_decode_cfemail(b) for b in blobs) if e})
 
-_EMAIL = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,24}")
+_EMAIL = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,18}")  # real TLDs <=18ch
 # junk that matches the email shape but isn't a real contact: error trackers, placeholders,
 # asset filenames, framework noise.
 _EMAIL_JUNK = ("sentry.", "@sentry", "example.", "@example", "wixpress", "@2x", ".png", ".jpg",
@@ -58,7 +104,15 @@ _TEL = re.compile(r"tel:(\+?[\d][\d\s().-]{5,})")  # explicit phone LINKS
 _PHONE_FMT = re.compile(r"(?<![\d.])(?:\+?1[-.\s])?\(?\d{3}\)?[-.\s]\d{3}[-.\s]\d{4}(?![\d.])")
 
 _JSON_LD = re.compile(r'<script[^>]*type=["\']application/ld\+json["\'][^>]*>(.*?)</script>', re.S | re.I)
-_ENTITY_TYPES = ("Person", "Organization", "Corporation", "LocalBusiness")
+_ORG_TYPES = ("Organization", "Corporation", "LocalBusiness", "Store", "Restaurant",
+              "ProfessionalService", "HomeAndConstructionBusiness", "HVACBusiness", "Plumber",
+              "Electrician", "GeneralContractor", "LegalService", "Attorney", "Dentist")
+# a Person reached via one of these keys is a review/blog author or quoted third party — NOT
+# the business owner. Drop them (precision: a wrong person poisons outreach).
+_DROP_PARENT = frozenset({"author", "creator", "reviewer", "commenter", "contributor", "publisher"})
+# a Person reached via one of these keys IS an owner/staff of the org — keep.
+_OWNER_PARENT = frozenset({"founder", "owner", "employee", "employees", "member", "members",
+                           "contactpoint", "manager", "founders", "director"})
 _KEEP = ("@type", "name", "jobTitle", "email", "telephone", "url", "sameAs", "worksFor", "address", "description")
 
 _META = [("og:title", "title"), ("og:description", "description"), ("og:site_name", "site"),
@@ -67,16 +121,17 @@ _META = [("og:title", "title"), ("og:description", "description"), ("og:site_nam
 
 
 def emails(text: str) -> list[str]:
-    text = _htmlmod.unescape(text or "")  # decode &#64;/&commat;/&#46; entity-encoded emails first
+    text = _clean(text)  # decode entities + fold invisibles before matching
     return sorted({e for e in _EMAIL.findall(text)
                    if not any(j in e.lower() for j in _EMAIL_JUNK)})
 
 
 def phones(text: str) -> list[str]:
     """`tel:` links plus formatted NANP numbers (separators required, so tracking-ID digit
-    runs don't match). Catches phones shown as plain text in a contact widget/page."""
-    tel = {re.sub(r"\s+", " ", t).strip() for t in _TEL.findall(text or "")}
-    fmt = {re.sub(r"\s+", " ", p).strip() for p in _PHONE_FMT.findall(text or "")}
+    runs don't match). Normalizes invisibles/unicode first so obfuscated numbers aren't lost."""
+    text = _clean(text)
+    tel = {re.sub(r"\s+", " ", t).strip() for t in _TEL.findall(text)}
+    fmt = {re.sub(r"\s+", " ", p).strip() for p in _PHONE_FMT.findall(text)}
     return sorted(tel | fmt)
 
 
@@ -92,18 +147,25 @@ def socials(text: str) -> list[str]:
     return sorted({m.group(0) for m in _SOCIAL.finditer(text or "") if _is_profile(m.group(0))})
 
 
-def _iter_entities(data):
-    """Walk JSON-LD: unwrap @graph, top-level arrays, and nested objects."""
-    stack = [data]
+def _walk_entities(data):
+    """Walk JSON-LD yielding (entity, parent_key). parent_key is '' for a top-level or
+    @graph-member entity; otherwise the key it hangs off (author/founder/review/...), which
+    tells us whether a Person is the owner or just a quoted third party."""
+    stack = [(data, "", True)]  # (node, parent_key, is_top_or_graph)
     while stack:
-        o = stack.pop()
-        if isinstance(o, dict):
-            if "@graph" in o and isinstance(o["@graph"], list):
-                stack.extend(o["@graph"])
-            yield o
-            stack.extend(v for v in o.values() if isinstance(v, (dict, list)))
-        elif isinstance(o, list):
-            stack.extend(o)
+        node, pkey, top = stack.pop()
+        if isinstance(node, dict):
+            graph = node.get("@graph")
+            if isinstance(graph, list):
+                for g in graph:
+                    stack.append((g, "", True))
+            yield node, ("" if top else pkey)
+            for k, v in node.items():
+                if k != "@graph" and isinstance(v, (dict, list)):
+                    stack.append((v, k.lower(), False))
+        elif isinstance(node, list):
+            for x in node:
+                stack.append((x, pkey, top))
 
 
 def structured(html: str) -> list[dict]:
@@ -114,13 +176,22 @@ def structured(html: str) -> list[dict]:
         try:
             data = json.loads(block.strip())
         except (json.JSONDecodeError, ValueError):
-            continue
-        for e in _iter_entities(data):
+            try:  # lenient reparse: WordPress often emits trailing commas
+                data = json.loads(re.sub(r",\s*([}\]])", r"\1", block.strip()))
+            except (json.JSONDecodeError, ValueError):
+                continue
+        for e, pkey in _walk_entities(data):
             if not isinstance(e, dict):
                 continue
-            t = e.get("@type")
-            types = t if isinstance(t, list) else [t]
-            if not any(x in _ENTITY_TYPES for x in types):
+            types = e.get("@type") if isinstance(e.get("@type"), list) else [e.get("@type")]
+            is_person = "Person" in types
+            is_org = any(x in _ORG_TYPES for x in types)
+            if is_person:
+                if pkey in _DROP_PARENT:            # review/blog author, not the owner
+                    continue
+                if pkey and pkey not in _OWNER_PARENT:  # nested under some non-owner key -> skip
+                    continue
+            elif not is_org:
                 continue
             kept = {k: e[k] for k in _KEEP if k in e}
             key = json.dumps(kept, sort_keys=True, default=str)
@@ -128,6 +199,35 @@ def structured(html: str) -> list[dict]:
                 seen.add(key)
                 out.append(kept)
     return out
+
+
+def _assemble_address(addr) -> str:
+    """schema.org address (object or string) -> 'street, City ST ZIP'. Emits only when >=2 of
+    {street, locality, postal} are present (kills country-only / zip-only false positives)."""
+    if isinstance(addr, str):
+        return addr.strip() if len(addr.strip()) > 8 else ""
+    if not isinstance(addr, dict):
+        return ""
+    street = addr.get("streetAddress")
+    if isinstance(street, list):
+        street = ", ".join(str(s) for s in street)
+    loc, reg, zp = addr.get("addressLocality"), addr.get("addressRegion"), addr.get("postalCode")
+    if sum(bool(x) for x in (street, loc, zp)) < 2:
+        return ""
+    cityline = " ".join(str(x) for x in (loc, reg, zp) if x)
+    return ", ".join(p for p in (str(street) if street else "", cityline) if p)
+
+
+def addresses(html: str) -> list[str]:
+    """Business street address from schema.org (the parentage-scoped primary org only)."""
+    out = []
+    for e in structured(html):
+        types = e.get("@type") if isinstance(e.get("@type"), list) else [e.get("@type")]
+        if "Person" not in types:  # org address, not a person's
+            a = _assemble_address(e.get("address"))
+            if a:
+                out.append(a)
+    return sorted(set(out))
 
 
 def meta(html: str) -> dict:
@@ -209,8 +309,8 @@ def enrich(markdown: str, html: str) -> dict:
     for e in st:  # fold schema.org telephones into phones
         if e.get("telephone"):
             tel.append(str(e["telephone"]))
-    # emails: visible/entity-encoded + Cloudflare-obfuscated + any in schema.org
-    em = set(emails(src)) | set(cfemails(html))
+    # emails: visible/entity + Cloudflare + bracketed at/dot + any in schema.org
+    em = set(emails(src)) | set(cfemails(html)) | set(atdot_emails(src))
     for e in st:
         if e.get("email"):
             em |= set(emails(str(e["email"])))
@@ -219,6 +319,7 @@ def enrich(markdown: str, html: str) -> dict:
         "emails": sorted(em),
         "phones": sorted(set(tel)),
         "socials": socials(src),
+        "addresses": addresses(html),
         "structured": st,
         "meta": meta(html),
     }

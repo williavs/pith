@@ -40,6 +40,7 @@ class Result:
     emails: list[str] = field(default_factory=list)
     phones: list[str] = field(default_factory=list)
     socials: list[str] = field(default_factory=list)   # linkedin/x/github/... profile URLs
+    addresses: list[str] = field(default_factory=list)  # business street addresses (schema.org)
     structured: list[dict] = field(default_factory=list)  # schema.org Person/Organization entities
     meta: dict = field(default_factory=dict)           # OpenGraph + author/date
 
@@ -244,6 +245,7 @@ class Extractor:
             r.excerpts = [body]
             det = _enrich(body, html)  # deterministic structured data — no LLM
             r.emails, r.phones, r.socials = det["emails"], det["phones"], det["socials"]
+            r.addresses = det.get("addresses", [])
             r.structured, r.meta = det["structured"], det["meta"]
             log.info("url_done", extra={"url": url, "ms": _ms(t), "bytes": len(body),
                                         "emails": len(r.emails), "socials": len(r.socials), "ok": True})
