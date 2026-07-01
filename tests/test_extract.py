@@ -53,14 +53,21 @@ def test_phone_normalizer_recovers_obfuscated():
     assert phones("Call 415‑555‑2671") == ["(415) 555-2671"]  # U+2011 hyphens
 
 
-def test_structured_drops_review_author_keeps_owner():
+def test_structured_labels_review_author_keeps_all():
     html = ('<script type="application/ld+json">{"@type":"Product","name":"AC",'
             '"review":{"@type":"Review","author":{"@type":"Person","name":"Karen W"}}}</script>'
             '<script type="application/ld+json">{"@type":"Organization","name":"Acme",'
             '"founder":{"@type":"Person","name":"Jeff Smith","jobTitle":"Owner"}}</script>')
-    names = [e.get("name") for e in structured(html)]
-    assert "Karen W" not in names          # review author -> dropped (precision)
-    assert "Jeff Smith" in names           # founder -> kept
+    rel = {e.get("name"): e.get("rel") for e in structured(html)}
+    assert rel.get("Karen W") == "author"  # KEPT, labeled author (not hidden — a consumer scopes it)
+    assert rel.get("Jeff Smith") == "founder"
+    # recipes.people default roster excludes the third-party author but keeps the owner
+    from pith import recipes
+    from pith.evidence import Fact, Source
+    facts = [Fact(n, "name", [Source("u", "schema.org")], {"rel": r}) for n, r in rel.items()]
+    roster = [p["name"] for p in recipes.people(facts)]
+    assert "Jeff Smith" in roster and "Karen W" not in roster
+    assert "Karen W" in [p["name"] for p in recipes.people(facts, include_third_party=True)]
 
 
 def test_address_assembly_and_gate():

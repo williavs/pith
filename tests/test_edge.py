@@ -79,10 +79,12 @@ def test_structured_parentage():
     # ProfilePage subject Person (mainEntity) kept
     h = '<script type="application/ld+json">{"@type":"ProfilePage","mainEntity":{"@type":"Person","name":"Jane Owner"}}</script>'
     assert "Jane Owner" in [e.get("name") for e in structured(h)]
-    # publisher Org dropped, business Org kept
+    # publisher Org is KEPT but labeled (rel=publisher) — data not hidden; the business Org is rel=""
     h2 = '<script type="application/ld+json">{"@type":"LocalBusiness","name":"Joes","publisher":{"@type":"Organization","name":"WP VIP"}}</script>'
-    names = [e.get("name") for e in structured(h2)]
-    assert "Joes" in names and "WP VIP" not in names
+    by_name = {e["name"]: e.get("rel") for e in structured(h2)}
+    assert by_name.get("Joes") == "" and by_name.get("WP VIP") == "publisher"   # kept, correctly labeled
+    # the business contact fold does NOT attribute the publisher's data to the page
+    assert "WP VIP" not in enrich("", h2)["socials"]
     # malformed dict telephone not stringified; schema phone canonicalized + deduped
     assert enrich("", '<script type="application/ld+json">{"@type":"Organization","name":"X","telephone":{"d":"x"}}</script>')["phones"] == []
     assert enrich("<p>(212) 867-5309</p>", '<script type="application/ld+json">{"@type":"Organization","name":"Y","telephone":"212-867-5309"}</script>')["phones"] == ["(212) 867-5309"]

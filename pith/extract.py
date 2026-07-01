@@ -178,6 +178,10 @@ _PARENT_TITLE = {"founder": "Founder", "founders": "Founder", "owner": "Owner",
 # product brand, grant funder) — NOT the business the page is about. Drop it.
 _DROP_ORG_PARENT = frozenset({"publisher", "sponsor", "brand", "funder", "provider",
                               "author", "creator", "copyrightholder"})
+# entities reached via these keys are third parties (review author, site publisher, ad sponsor).
+# structured() KEEPS them (labeled rel=...); a consumer scoping "the business's OWN contact"
+# skips them — the data is surfaced, only the attribution is scoped.
+_THIRD_PARTY_REL = _DROP_PARENT | _DROP_ORG_PARENT
 _KEEP = ("@type", "name", "jobTitle", "email", "telephone", "url", "sameAs", "worksFor", "address", "description")
 
 _META = [("og:title", "title"), ("og:description", "description"), ("og:site_name", "site"),
@@ -274,17 +278,13 @@ def structured(html: str) -> list[dict]:
             types = e.get("@type") if isinstance(e.get("@type"), list) else [e.get("@type")]
             is_person = "Person" in types
             is_org = any(x in _ORG_TYPES for x in types)
-            if is_person:
-                if pkey in _DROP_PARENT:            # review/blog author, not the owner
-                    continue
-                if pkey and pkey not in _OWNER_PARENT:  # nested under some non-owner key -> skip
-                    continue
-            elif is_org:
-                if pkey in _DROP_ORG_PARENT:        # publisher/sponsor/brand -> third-party org, skip
-                    continue
-            else:
+            if not (is_person or is_org):
                 continue
+            # Keep EVERY real entity — never hide data. Tag its relationship to the page so a
+            # consumer can scope (a review author, a publisher org) WITHOUT the core deciding
+            # for them. `rel`: "" = top-level/@graph (the page's subject); else the parent key.
             kept = {k: e[k] for k in _KEEP if k in e}
+            kept["rel"] = pkey
             if is_person and not kept.get("jobTitle") and pkey in _PARENT_TITLE:
                 kept["jobTitle"] = _PARENT_TITLE[pkey]   # schema placed them under founder/owner/... = their title
             key = json.dumps(kept, sort_keys=True, default=str)
@@ -438,7 +438,9 @@ def enrich(markdown: str, html: str, source_url: str = "") -> dict:
     obs += [(p, "phone", _s("text"), {}) for p in phones(html)]
     obs += [(s, "social", _s("text"), {}) for s in socials(src)]
     obs += [(a, "address", _s("schema.org"), {}) for a in addresses(html)]
-    for e in st:                               # schema.org is authoritative: emails, tel, own sameAs
+    for e in st:                               # schema.org contact — but only the PAGE'S OWN
+        if e.get("rel") in _THIRD_PARTY_REL:   # an author's/publisher's contact isn't the page's
+            continue                           # (they stay in structured() — attribution, not hiding)
         v = e.get("email")
         if isinstance(v, str):
             obs += [(x, "email", _s("schema.org"), _email_label(x)) for x in emails(v) if not _junk_email(x)]

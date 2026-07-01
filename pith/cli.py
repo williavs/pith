@@ -257,9 +257,9 @@ def contact_evidence(website: str, workers: int = 4) -> dict:
     for r in out.results:                                 # schema.org Person -> a named contact
         for e in r.structured:
             types = e.get("@type") if isinstance(e.get("@type"), list) else [e.get("@type")]
-            if "Person" in types and e.get("name"):
+            if "Person" in types and e.get("name"):        # keep ALL people, labeled by relationship
                 obs.append((str(e["name"]), "name", Source(r.url, "schema.org"),
-                            {"title": e.get("jobTitle", "")}))
+                            {"title": e.get("jobTitle", ""), "rel": e.get("rel", "")}))
     # WHOIS registrant contact = another independent source
     whois = _whois_registrant(domain)
     if whois.get("email"):

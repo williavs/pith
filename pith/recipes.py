@@ -56,18 +56,28 @@ def _area_code(phone: str) -> str:
 
 # --- people / roster recipe (over Fact evidence, kind="name") ---
 
-def people(facts):
+# relationships that are a third party to the page (review author, publisher), not the org's
+# own people — excluded from the default roster, but present in the facts if you want them.
+_THIRD_PARTY = frozenset({"author", "creator", "reviewer", "commenter", "contributor",
+                          "publisher", "sponsor", "brand", "funder", "provider", "copyrightholder"})
+
+
+def people(facts, include_third_party=False):
     """The named people the core surfaced (schema.org Person on team/leadership/about pages),
-    with titles + provenance, deduped by name and ranked by corroboration. This is the roster
-    the core makes EASY to get; an app paints the org picture from it (see
-    examples/gtm/company_people.py). Empty when a site has no machine-readable team — that's
-    the honest boundary of deterministic, no-LLM extraction, not a silent miss."""
+    with titles + provenance, deduped by name and ranked by corroboration. The core hides
+    nothing — every Person is in `facts` labeled with its `rel`; this recipe just excludes
+    third parties (a review author) from the default roster. Pass include_third_party=True to
+    keep them (a journalist wants the author). Empty roster = the site has no machine-readable
+    team, the honest boundary of deterministic no-LLM extraction, not a silent miss."""
     out = []
     for f in facts:
-        if f.kind == "name" and f.value:
-            out.append({"name": f.value, "title": (f.labels or {}).get("title", ""),
-                        "corroboration": f.corroboration,
-                        "sources": sorted({s.url for s in f.sources})})
+        if f.kind != "name" or not f.value:
+            continue
+        if not include_third_party and (f.labels or {}).get("rel") in _THIRD_PARTY:
+            continue
+        out.append({"name": f.value, "title": (f.labels or {}).get("title", ""),
+                    "rel": (f.labels or {}).get("rel", ""), "corroboration": f.corroboration,
+                    "sources": sorted({s.url for s in f.sources})})
     return sorted(out, key=lambda p: (-p["corroboration"], p["name"]))
 
 

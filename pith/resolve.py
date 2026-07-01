@@ -41,10 +41,11 @@ def _norm_url(u: str) -> str:
 def _owner_name(r) -> str:
     """The profile's owner name — schema Person -> og:title -> title. OWNER SLOT ONLY: a name
     in body text can be a different person, so we never read it."""
+    from .extract import _THIRD_PARTY_REL
     for e in r.structured:
         types = e.get("@type") if isinstance(e.get("@type"), list) else [e.get("@type")]
-        if "Person" in types and e.get("name"):
-            return str(e["name"])
+        if "Person" in types and e.get("name") and e.get("rel") not in _THIRD_PARTY_REL:
+            return str(e["name"])               # the page's subject, not a review author
     return r.meta.get("title") or r.title or ""
 
 
