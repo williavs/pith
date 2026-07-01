@@ -30,4 +30,4 @@ build-backend = "setuptools.build_meta"
 packages = ["pith"]
 
 [tool.setuptools.package-data]
-pith = ["disposable_domains.txt"]  # bundled disposable list (MIT, umuterturk/email-verifier)
+pith = ["disposable_domains.txt", "osint_sites.json"]  # bundled disposable list (MIT, umuterturk/email-verifier)
