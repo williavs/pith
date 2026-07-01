@@ -42,13 +42,15 @@ def _pick(sites: dict, persona, kind, only, all_sites) -> list[str]:
     names = list(sites)
     if only:                                   # explicit site list — full control
         return [s for s in only if s in sites]
-    if all_sites:                              # everything (Sherlock-style long tail)
+    if all_sites:                              # literally everything, including adult
         return names
-    if kind:                                   # by data type
+    if kind:                                   # only the recognised sites of this data type
         return [s for s in GTM_SITES if s in sites and GTM_SITES[s][0] == kind]
-    if persona:                                # persona route
+    if persona:                                # focused persona route
         return curated(names, persona)
-    return [s for s in GTM_SITES if s in sites]  # opinionated default: the curated GTM subset
+    # permissive default: EVERY site except adult — the long tail carries real hooks. Value
+    # tags (GTM_SITES) rank/route the recognised ones; the rest surface as "other", not dropped.
+    return [s for s in names if not sites[s].get("isNSFW")]
 
 
 def _check(cfg: dict, handle: str, timeout: int):

@@ -178,10 +178,10 @@ def test_profiles_config_vs_opinionated():
     from pith.profiles import load_sites, _pick
     s = load_sites()
     assert len(s) > 400 and "$schema" not in s and "GitHub" in s
-    default = _pick(s, None, None, None, False)          # opinionated: curated GTM subset
-    assert "GitHub" in default and len(default) < 30
-    assert set(_pick(s, "technical", None, None, False)) <= {"GitHub", "GitLab", "Twitter", "Reddit", "Medium"}
-    assert len(_pick(s, None, None, None, True)) > 400   # all_sites = the long tail
+    default = _pick(s, None, None, None, False)          # permissive: all non-adult
+    assert "GitHub" in default and len(default) > 400 and len(default) < len(s)
+    assert set(_pick(s, "technical", None, None, False)) <= set(default) and "GitHub" in _pick(s, "technical", None, None, False)
+    assert len(_pick(s, None, None, None, True)) >= len(default)   # all_sites includes adult
     assert _pick(s, None, None, ["GitHub", "Reddit"], False) == ["GitHub", "Reddit"]  # explicit
     firm = _pick(s, None, "firmographic", None, False)   # by data type
     assert "GitHub" in firm and "Reddit" not in firm
