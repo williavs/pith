@@ -32,18 +32,33 @@ from pith import Extractor
 
 ex = Extractor()  # no API key, no LLM
 
-out = ex.extract(urls=["https://www.crunchbase.com/organization/stripe"], concurrency=8)
+out = ex.extract(urls=["https://www.crunchbase.com/organization/stripe"], concurrency=8, timeout=15)
 for r in out.results:
     print(r.title, r.publish_date)
-    print(r.excerpts[0])          # clean markdown
+    print(r.markdown)             # clean markdown (also as r.excerpts[0] / r.full_content — Parallel shape)
     print(r.emails, r.socials)    # deterministic structured data — no LLM
-    print(r.structured)           # schema.org Person/Organization entities
+    print(r.structured)           # list[dict] of schema.org entities (Person/Organization)
+    if r.error:                   # per-row soft failure: "empty" | "timeout" | "blocked" | "http_404" | ...
+        print("incomplete:", r.error)
 ```
 
-`extract()` params: `urls`, `full_content` (False), `render_js` (`"auto"` | `True` |
-`False`), `concurrency` (1). Result fields: `r.url`, `r.title`, `r.publish_date`,
-`r.excerpts` (list), `r.full_content`, plus auto-extracted `r.emails`, `r.phones`,
-`r.socials`, `r.structured`, `r.meta`.
+**`extract()` params:** `urls`, `render_js` (`"auto"` | `True` | `False`), `concurrency` (1),
+`timeout` (seconds, per URL — each fetch tier honors it; `None` = 12s default).
+
+**Result fields:** `r.url`, `r.title`, `r.publish_date`, `r.markdown` (canonical clean markdown),
+`r.error` (per-row failure reason, or `None`), plus auto-extracted `r.emails`, `r.phones`,
+`r.socials`, `r.addresses` (business street addresses from schema.org), `r.structured`
+(`list[dict]` — schema.org entities), `r.meta` (OpenGraph + author/date).
+
+**Parallel-compat aliases:** `r.excerpts` (`[r.markdown]`) and `r.full_content` (`r.markdown`) —
+so a Parallel Extract mapping ports unchanged.
+
+**Async:** `await ex.aextract(urls, ...)` — same args, offloaded to a worker thread so your
+event loop stays free (FastAPI/async apps). No need to wrap it in `asyncio.to_thread` yourself.
+
+**Per-URL failures:** a URL that fetches but yields nothing comes back in `results` with
+`r.error` set; a URL that raises comes back in `out.errors` as `{url, error, reason}`, where
+`reason` is the same stable set (`timeout`/`blocked`/`http_404`/`dns`/...). Failures never sink the batch.
 
 ## Use — CLI
 
@@ -128,6 +143,13 @@ tricks floating around are dead as of mid-2026.)
 | `[js]` | `scrapling[fetchers]` → patchright/playwright + a stealth browser; `curl_cffi` for the impersonation tier | `scrapling install` downloads a browser (~hundreds of MB). Heavy, but it's what beats the walls. |
 | `[docs]` | `markitdown[all]` | PDF/Word/PowerPoint/Excel/epub/images → markdown |
 | `[pdf]` | `pymupdf` | lighter than `[docs]` if PDFs are all you need |
+
+**Deploying `[js]` (Docker / serverless):** the stealth browser is downloaded by `scrapling
+install`, *not* bundled in the wheel — so `pip install` alone won't render JS pages in a fresh
+container. In your build phase, after the pip install, run `scrapling install` and set
+`PLAYWRIGHT_BROWSERS_PATH` to a path that persists into the runtime image (or leave it default
+and make sure the browser dir is copied into the final layer). Skip this only if you run
+base-tier extraction (no `render_js=True`, no walled sources).
 
 ## Limits & responsible use
 

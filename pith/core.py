@@ -34,15 +34,26 @@ class Result:
     title: Optional[str] = None
     publish_date: Optional[str] = None
     markdown: str = ""                                 # clean extracted markdown of the page
+    error: Optional[str] = None                        # per-row soft-failure reason (thin/blocked/timeout); None = ok
     # deterministic structured data, auto-extracted from the page (no LLM) — the developer
     # gets these for free on every result:
     emails: list[str] = field(default_factory=list)
     phones: list[str] = field(default_factory=list)
     socials: list[str] = field(default_factory=list)   # linkedin/x/github/... profile URLs
     addresses: list[str] = field(default_factory=list)  # business street addresses (schema.org)
-    structured: list[dict] = field(default_factory=list)  # schema.org Person/Organization entities
+    structured: list[dict] = field(default_factory=list)  # list of schema.org entities (Person/Organization), each a dict
     meta: dict = field(default_factory=dict)           # OpenGraph + author/date
     facts: list = field(default_factory=list)          # evidence model: Fact(value, sources[url+method], corroboration)
+
+    # Parallel Extract API compatibility — pith is a drop-in, so it exposes Parallel's field
+    # names too. `markdown` is the canonical field; these derive from it (no double storage).
+    @property
+    def excerpts(self) -> list[str]:
+        return [self.markdown] if self.markdown else []
+
+    @property
+    def full_content(self) -> str:
+        return self.markdown
 
 
 @dataclass
@@ -63,6 +74,14 @@ from ipaddress import ip_address as _ip
 # cloud metadata at 169.254.169.254). Set PITH_ALLOW_LOCAL=1 to opt out for trusted local use.
 _ALLOW_LOCAL = _os.environ.get("PITH_ALLOW_LOCAL") == "1"
 _FETCH_TIMEOUT = int(_os.environ.get("PITH_FETCH_TIMEOUT", "12"))
+
+# Per-call fetch budget (seconds). extract(timeout=) sets it thread-locally so the fetch tiers
+# honor the caller's budget without threading it through every signature. None = env default.
+# ponytail: thread-local, not a param — sync fetches can't be hard-cancelled, only bounded.
+import threading as _threading
+_tls = _threading.local()
+def _timeout() -> int:
+    return getattr(_tls, "budget", None) or _FETCH_TIMEOUT
 
 
 class UnsafeURL(ValueError):
@@ -90,15 +109,15 @@ def _guard_url(url: str) -> str:
 
 
 # short download timeout so one slow/hostile host can't pin a worker for 30s (trafilatura's default)
-_TRAF_CFG = None
+_TRAF_CFGS: dict = {}
 def _traf_config():
-    global _TRAF_CFG
-    if _TRAF_CFG is None:
+    t = _timeout()
+    if t not in _TRAF_CFGS:
         from trafilatura.settings import use_config
         c = use_config()
-        c.set("DEFAULT", "DOWNLOAD_TIMEOUT", str(_FETCH_TIMEOUT))
-        _TRAF_CFG = c
-    return _TRAF_CFG
+        c.set("DEFAULT", "DOWNLOAD_TIMEOUT", str(t))
+        _TRAF_CFGS[t] = c
+    return _TRAF_CFGS[t]
 
 
 def _fetch_static(url: str) -> str:
@@ -107,7 +126,7 @@ def _fetch_static(url: str) -> str:
     html = trafilatura.fetch_url(url, config=_traf_config())
     if not html:  # trafilatura declined (rare) -> plain urllib
         req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 pith"})
-        html = urllib.request.urlopen(req, timeout=_FETCH_TIMEOUT).read().decode("utf-8", "ignore")
+        html = urllib.request.urlopen(req, timeout=_timeout()).read().decode("utf-8", "ignore")
     return html
 
 
@@ -121,7 +140,7 @@ def _fetch_impersonate(url: str) -> str:
     except ImportError as e:
         raise RuntimeError("impersonation tier needs: pip install 'pith[js]'") from e
     _guard_url(url)
-    r = creq.get(url, impersonate="chrome", timeout=_FETCH_TIMEOUT)
+    r = creq.get(url, impersonate="chrome", timeout=_timeout())
     r.raise_for_status()
     return r.text
 
@@ -165,8 +184,10 @@ def _fetch_js(url: str) -> str:
             "JS rendering needs the browser extra: pip install 'pith[js]' && scrapling install"
         ) from e
     _guard_url(url)
+    # browser gets 60s by default (Cloudflare/Turnstile is slow); an explicit caller budget wins
+    _budget = getattr(_tls, "budget", None)
     page = StealthyFetcher.fetch(
-        url, headless=True, network_idle=False, timeout=60000,
+        url, headless=True, network_idle=False, timeout=_budget * 1000 if _budget else 60000,
         solve_cloudflare=True, google_search=True,
     )
     # scrapling returns the rendered HTML; field name has shifted across versions, so be tolerant
@@ -207,6 +228,24 @@ def _needs_browser(url: str) -> bool:
 def _looks_thin(markdown: Optional[str]) -> bool:
     """A near-empty static extract usually means the content is rendered by JS."""
     return not markdown or len(markdown.strip()) < 200
+
+
+def _classify_error(e: Exception) -> str:
+    """Map a fetch exception to a stable, machine-joinable reason string, so a caller can
+    branch on WHY a URL failed (retry a timeout, skip a 404) without regexing the message."""
+    if isinstance(e, UnsafeURL):
+        return "unsafe_url"
+    s = str(e).lower()
+    if "timed out" in s or "timeout" in s:
+        return "timeout"
+    for code in ("400", "401", "403", "404", "410", "429", "500", "502", "503"):
+        if code in s:
+            return "blocked" if code in ("401", "403", "429") else f"http_{code}"
+    if "name or service not known" in s or "not resolve" in s or "nodename" in s:
+        return "dns"
+    if "connection" in s:
+        return "connection"
+    return "error"
 
 
 # A browser result this small is usually a transient anti-bot wall (CAPTCHA / rate limit),
@@ -270,6 +309,7 @@ class Extractor:
         urls: list[str],
         render_js: object = "auto",  # "auto" | True | False
         concurrency: int = 1,       # >1 enables tier-aware parallel fetching
+        timeout: Optional[int] = None,  # per-URL fetch budget (s); each tier honors it. None = 12s default
     ) -> ExtractResult:
         """Extract clean markdown for each URL. Results preserve input order; a single
         failed URL lands in `.errors`, never sinks the batch.
@@ -280,7 +320,7 @@ class Extractor:
         RAM-heavy stealth browser. Most enrichment lists are company websites = cheap tier,
         so the speedup is large in practice."""
         if concurrency <= 1:
-            return self._reassemble(urls, {u: self._extract_one(u, render_js) for u in urls})
+            return self._reassemble(urls, {u: self._extract_one(u, render_js, timeout) for u in urls})
 
         from concurrent.futures import ThreadPoolExecutor
         forces_browser = render_js is True
@@ -289,7 +329,7 @@ class Extractor:
         done: dict = {}
 
         def work(url):
-            return url, self._extract_one(url, render_js)
+            return url, self._extract_one(url, render_js, timeout)
 
         for group, workers in ((cheap, concurrency),
                                (browser, min(concurrency, _BROWSER_MAX_CONCURRENCY))):
@@ -299,13 +339,16 @@ class Extractor:
                 done.update(dict(pool.map(work, group)))
         return self._reassemble(urls, done)
 
-    def _extract_one(self, url, render_js):
+    def _extract_one(self, url, render_js, timeout=None):
         """One URL -> Result, or an error dict. The unit of work for the batch loop."""
         t = perf_counter()
+        _tls.budget = timeout            # per-URL fetch budget for this thread; None = env default
         try:
             meta, body, html = self._to_markdown(url, render_js)
             r = Result(url=url, title=meta.get("title"), publish_date=meta.get("date"))
             r.markdown = body
+            if not body.strip():         # fetched, but nothing extractable (blank/JS-shell/soft-block)
+                r.error = "empty"
             det = _enrich(body, html, source_url=url)  # deterministic structured data — no LLM
             r.emails, r.phones, r.socials = det["emails"], det["phones"], det["socials"]
             r.addresses = det.get("addresses", [])
@@ -315,8 +358,11 @@ class Extractor:
                                         "emails": len(r.emails), "socials": len(r.socials), "ok": True})
             return r
         except Exception as e:  # one bad URL shouldn't sink the batch
+            reason = _classify_error(e)
             log.info("url_done", extra={"url": url, "ms": _ms(t), "ok": False, "err": str(e)[:120]})
-            return {"url": url, "error": str(e)}
+            return {"url": url, "error": str(e), "reason": reason}
+        finally:
+            _tls.budget = None
 
     @staticmethod
     def _reassemble(urls, done: dict) -> ExtractResult:
@@ -363,6 +409,8 @@ class Extractor:
         try:
             html = _fetch_static(url)
             md, raw = _extract_md(html), html
+        except UnsafeURL:                 # guard rejection is terminal — propagate the real reason
+            raise
         except Exception as e:
             log.debug("tier_fail", extra={"url": url, "tier": "static", "err": str(e)[:80]})
         if not _looks_thin(md):

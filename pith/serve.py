@@ -57,6 +57,17 @@ def _int(body, key, default, lo=1, hi=64):
     return max(lo, min(hi, n))
 
 
+def _opt_int(body, key):
+    """Optional int field; absent/None -> None (no clamp). Bad value -> 400."""
+    v = body.get(key)
+    if v is None:
+        return None
+    try:
+        return int(v)
+    except (TypeError, ValueError):
+        raise BadRequest(f"'{key}' must be an integer, got {v!r}")
+
+
 def _extract(body):
     urls = body.get("urls")
     if urls is None and body.get("url") is not None:
@@ -69,8 +80,18 @@ def _extract(body):
     if len(urls) > MAX_URLS:
         raise BadRequest(f"too many urls: {len(urls)} (max {MAX_URLS} per request)")
     out = Extractor().extract(urls, render_js=body.get("js", "auto"),
-                              concurrency=_int(body, "concurrency", min(8, len(urls))))
-    return {"results": [asdict(r) for r in out.results], "errors": [str(e) for e in out.errors]}
+                              concurrency=_int(body, "concurrency", min(8, len(urls))),
+                              timeout=_opt_int(body, "timeout"))
+    return {"results": [_result_json(r) for r in out.results],
+            "errors": out.errors}   # errors are {url, error, reason} dicts — keep them joinable
+
+
+def _result_json(r) -> dict:
+    """Result -> JSON. asdict() skips @property, so add the Parallel-compat fields by hand."""
+    d = asdict(r)
+    d["excerpts"] = r.excerpts          # Parallel-compat: markdown as a one-element list
+    d["full_content"] = r.full_content  # Parallel-compat: markdown under Parallel's field name
+    return d
 
 
 def _contact(body):
