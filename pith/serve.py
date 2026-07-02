@@ -128,6 +128,11 @@ def _jobs(body):
     return jobs_search(_str(body, "company"), _str(body, "domain"))
 
 
+def _financials(body):
+    from .financials import company_intel
+    return company_intel(_str(body, "company"), ticker=body.get("ticker"))
+
+
 # path -> (handler, heavy?). heavy handlers do network fetches and go through the gate.
 _ROUTES = {
     "/extract":      (_extract, True),
@@ -140,6 +145,7 @@ _ROUTES = {
     "/phone":        (_phone, False),      # offline phone intelligence
     "/news":         (_news, True),        # keyless buyer-intent news search
     "/jobs":         (_jobs, True),        # keyless job-board company intel
+    "/financials":   (_financials, True),  # keyless SEC/funding/identity/market bundle (company_intel)
 }
 
 
