@@ -36,6 +36,17 @@ def test_health_and_verify():
         srv.shutdown()
 
 
+def test_console_served():
+    srv, port = _server()
+    try:
+        with urllib.request.urlopen(f"http://127.0.0.1:{port}/", timeout=5) as r:
+            body = r.read().decode()
+            assert r.status == 200 and r.headers["Content-Type"].startswith("text/html")
+        assert "<title>pith" in body and "/extract" in body   # the console HTML, wired to routes
+    finally:
+        srv.shutdown()
+
+
 def test_error_codes():
     srv, port = _server()
     try:

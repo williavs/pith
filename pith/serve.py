@@ -170,6 +170,12 @@ _ROUTES = {
 }
 
 
+_CONSOLE = os.path.join(os.path.dirname(__file__), "console.html")
+def _console_html() -> str:
+    with open(_CONSOLE, encoding="utf-8") as f:   # single-file operator UI, served same-origin
+        return f.read()
+
+
 _READ_TIMEOUT = int(os.environ.get("PITH_READ_TIMEOUT", "15"))   # slowloris guard
 _MAX_BODY = int(os.environ.get("PITH_MAX_BODY", str(4 * 1024 * 1024)))
 
@@ -192,10 +198,21 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(b)
 
     def do_GET(self):
-        if urlparse(self.path).path == "/health":
+        path = urlparse(self.path).path
+        if path == "/health":
             self._json(200, {"status": "ok", "service": "pith", "version": __version__, "max_concurrency": _MAX})
+        elif path in ("/", "/console"):
+            self._html(_console_html())
         else:
-            self._json(404, {"error": "GET /health; POST /extract /contact /intel /directory /profiles /verify-email /gravatar /phone"})
+            self._json(404, {"error": "GET / (console) or /health; POST /extract /contact /intel /directory /profiles /verify-email /gravatar /phone /news /jobs /financials"})
+
+    def _html(self, body: str):
+        b = body.encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(b)))
+        self.end_headers()
+        self.wfile.write(b)
 
     def do_POST(self):
         t = time.time()
@@ -233,8 +250,8 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def serve(port=8900):
-    print(f"pith API → http://127.0.0.1:{port}  ·  max_concurrency={_MAX}")
-    print("  POST /extract /contact /intel /directory /profiles /verify-email  ·  GET /health")
+    print(f"pith → http://127.0.0.1:{port}  (console at /)  ·  max_concurrency={_MAX}")
+    print("  POST /extract /contact /intel /directory /profiles /verify-email /gravatar /phone /news /jobs /financials")
     ThreadingHTTPServer(("127.0.0.1", port), Handler).serve_forever()
 
 

@@ -1,0 +1,374 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>pith · console</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,600;9..144,900&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --paper:#faf8f4; --panel:#f2ede3; --panel2:#ece5d8;
+    --ink:#211c16; --dim:#8a8074; --faint:#b6ac9c; --line:#e4ddcf;
+    --ox:#8b2b2b; --ox2:#a8402f; --ochre:#9a6a1a; --sage:#4d6b45;
+    --mono:"JetBrains Mono",monospace; --serif:"Fraunces",Georgia,serif;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%}
+  body{
+    background:var(--paper); color:var(--ink); font-family:var(--mono); font-size:13px; line-height:1.5;
+    background-image:radial-gradient(var(--line) 0.5px, transparent 0.5px); background-size:22px 22px;
+    display:flex; flex-direction:column; min-height:100vh;
+  }
+  a{color:var(--ox); text-decoration:none} a:hover{text-decoration:underline}
+  ::selection{background:#e7d6c2}
+
+  header{
+    padding:16px 26px 14px; border-bottom:2px solid var(--ink); display:flex;
+    align-items:baseline; gap:16px; flex-wrap:wrap; background:var(--paper);
+  }
+  header h1{margin:0; font-family:var(--serif); font-weight:900; font-size:30px; letter-spacing:-1px; line-height:.9}
+  header h1 .dot{color:var(--ox)}
+  header .sub{color:var(--dim); font-size:11px; letter-spacing:.5px}
+  header .health{margin-left:auto; font-size:11px; color:var(--dim)}
+  header .health b{color:var(--sage)}
+
+  .wrap{display:flex; flex:1; min-height:0}
+  nav{
+    width:210px; flex:none; border-right:2px solid var(--ink); padding:16px 0; background:var(--panel);
+    overflow-y:auto;
+  }
+  nav .grp{padding:4px 18px; font-size:10px; letter-spacing:1.5px; color:var(--faint); text-transform:uppercase; margin-top:12px}
+  nav .grp:first-child{margin-top:0}
+  nav button{
+    display:block; width:100%; text-align:left; border:0; background:none; font-family:var(--mono);
+    font-size:13px; color:var(--ink); padding:6px 18px; cursor:pointer; border-left:3px solid transparent;
+  }
+  nav button:hover{background:var(--panel2)}
+  nav button.on{background:var(--paper); border-left-color:var(--ox); font-weight:700; color:var(--ox)}
+  nav button .d{display:block; font-size:10px; color:var(--dim); font-weight:400}
+  nav button.on .d{color:var(--ochre)}
+
+  main{flex:1; overflow-y:auto; padding:22px 30px 60px}
+  .tool-h{font-family:var(--serif); font-weight:900; font-size:26px; letter-spacing:-.5px; margin:0 0 2px}
+  .tool-sub{color:var(--dim); font-size:12px; margin-bottom:18px; max-width:640px}
+  .tool-sub code{background:var(--panel2); padding:1px 5px; border-radius:2px}
+
+  form{display:flex; flex-wrap:wrap; gap:12px 18px; align-items:flex-end; margin-bottom:6px}
+  .fld{display:flex; flex-direction:column; gap:4px}
+  .fld label{font-size:10px; letter-spacing:.8px; text-transform:uppercase; color:var(--dim)}
+  .fld input, .fld textarea{
+    font-family:var(--mono); font-size:13px; background:#fff; border:1.5px solid var(--line);
+    padding:7px 9px; color:var(--ink); border-radius:3px; min-width:220px;
+  }
+  .fld input:focus,.fld textarea:focus{outline:none; border-color:var(--ox)}
+  .fld textarea{min-width:360px; min-height:64px; resize:vertical}
+  .fld.sm input{min-width:90px}
+  button.run{
+    font-family:var(--mono); font-size:13px; font-weight:700; background:var(--ink); color:var(--paper);
+    border:0; padding:8px 20px; cursor:pointer; border-radius:3px; letter-spacing:.5px;
+  }
+  button.run:hover{background:var(--ox)}
+  button.run:disabled{opacity:.5; cursor:wait}
+
+  .meta{display:flex; gap:16px; align-items:center; margin:16px 0 12px; font-size:11px; color:var(--dim); flex-wrap:wrap}
+  .meta .ms{color:var(--ox); font-weight:700}
+  .meta .rawtog{margin-left:auto; cursor:pointer; text-decoration:underline; color:var(--dim)}
+  .err{border:1.5px solid var(--ox); background:#f7ebe8; color:var(--ox); padding:10px 14px; border-radius:3px; margin:14px 0}
+
+  .result{}
+  .card{border:1.5px solid var(--line); background:var(--panel); border-radius:4px; padding:14px 16px; margin-bottom:12px; box-shadow:2px 2px 0 var(--line)}
+  .card h3{margin:0 0 8px; font-family:var(--serif); font-weight:600; font-size:17px}
+  .kv{display:grid; grid-template-columns:150px 1fr; gap:2px 14px; font-size:12.5px}
+  .kv dt{color:var(--dim)} .kv dd{margin:0; word-break:break-word}
+  .kv dd.big{font-weight:700; color:var(--ox)}
+  table{border-collapse:collapse; width:100%; font-size:12px; margin-top:6px}
+  th,td{text-align:left; padding:5px 9px; border-bottom:1px solid var(--line); vertical-align:top}
+  th{font-size:10px; letter-spacing:.8px; text-transform:uppercase; color:var(--dim); border-bottom:1.5px solid var(--ink)}
+  tr:hover td{background:var(--panel2)}
+  .pill{display:inline-block; font-size:10px; padding:1px 7px; border-radius:10px; background:var(--panel2); color:var(--dim); margin:1px 3px 1px 0}
+  .pill.hot{background:#f2dcd6; color:var(--ox)}
+  .pill.ok{background:#dfe8da; color:var(--sage)}
+  .pill.warn{background:#f0e4cf; color:var(--ochre)}
+  .corr{display:inline-block; min-width:20px; text-align:center; font-weight:700; color:var(--ox)}
+  .muted{color:var(--dim)}
+  .count-badge{font-size:11px; color:var(--dim)}
+  pre.raw{background:#241f19; color:#e8dfce; padding:14px; border-radius:4px; font-size:11.5px; overflow:auto; max-height:520px; white-space:pre-wrap; word-break:break-word}
+  .md{background:#fff; border:1.5px solid var(--line); border-radius:4px; padding:14px 16px; max-height:420px; overflow:auto; font-size:12.5px; white-space:pre-wrap}
+  .empty{color:var(--faint); font-style:italic; padding:20px 0}
+  .spin{display:inline-block; animation:sp 1s linear infinite}
+  @keyframes sp{to{transform:rotate(360deg)}}
+</style>
+</head>
+<body>
+<header>
+  <h1>pith<span class="dot">.</span></h1>
+  <span class="sub">extraction &amp; intelligence console</span>
+  <span class="health" id="health">connecting&hellip;</span>
+</header>
+<div class="wrap">
+  <nav id="nav"></nav>
+  <main id="main"></main>
+</div>
+<script>
+const API = ""; // same-origin: served by pith.serve
+
+// ---- tool registry: label, path, one-liner, fields, renderer ----
+const T = {
+  extract: { grp:"COMPANY", label:"Extract", path:"/extract",
+    d:"URL → clean markdown + structured (emails/socials/schema.org)",
+    fields:[{k:"urls",t:"textarea",ph:"https://stripe.com\n(one per line)",label:"urls"},
+            {k:"timeout",t:"num",v:20,label:"timeout s",sm:1}],
+    build:v=>({urls:v.urls.split(/\n+/).map(s=>s.trim()).filter(Boolean), timeout:num(v.timeout)}),
+    render:renderExtract },
+  contact: { grp:"COMPANY", label:"Contact evidence", path:"/contact",
+    d:"Crawl a site → corroborated emails/phones as evidence (value + sources + corroboration)",
+    fields:[{k:"website",t:"text",ph:"https://stripe.com",label:"website"}],
+    build:v=>({website:v.website}), render:renderContact },
+  intel: { grp:"COMPANY", label:"Site intel", path:"/intel",
+    d:"Tech stack, framework, modernness grade, domain age",
+    fields:[{k:"url",t:"text",ph:"https://stripe.com",label:"url"}],
+    build:v=>({url:v.url}), render:renderIntel },
+  financials: { grp:"COMPANY", label:"Financials", path:"/financials",
+    d:"Keyless SEC/funding/market/identity bundle — routed by company type",
+    fields:[{k:"company",t:"text",ph:"GitLab",label:"company"},{k:"ticker",t:"text",ph:"GTLB (optional)",label:"ticker",sm:1}],
+    build:v=>({company:v.company, ticker:v.ticker||undefined}), render:renderFinancials },
+  news: { grp:"COMPANY", label:"News signals", path:"/news",
+    d:"Buyer-intent news across HN/Bing/blog — tagged funding/leadership/hiring/…",
+    fields:[{k:"company",t:"text",ph:"Stripe",label:"company"},{k:"domain",t:"text",ph:"stripe.com",label:"domain"},{k:"window_days",t:"num",v:90,label:"days",sm:1}],
+    build:v=>({company:v.company, domain:v.domain||undefined, window_days:num(v.window_days)}), render:renderNews },
+  jobs: { grp:"COMPANY", label:"Job boards", path:"/jobs",
+    d:"Discover the ATS (Greenhouse/Lever/Ashby/…) and pull open postings",
+    fields:[{k:"company",t:"text",ph:"Stripe",label:"company"},{k:"domain",t:"text",ph:"stripe.com",label:"domain"}],
+    build:v=>({company:v.company, domain:v.domain}), render:renderJobs },
+  profiles: { grp:"PEOPLE / OSINT", label:"Profiles", path:"/profiles",
+    d:"Enumerate public accounts for a handle across many sites",
+    fields:[{k:"handle",t:"text",ph:"torvalds",label:"handle"}],
+    build:v=>({handle:v.handle}), render:renderProfiles },
+  gravatar: { grp:"PEOPLE / OSINT", label:"Gravatar", path:"/gravatar",
+    d:"Email → Gravatar profile + linked public accounts",
+    fields:[{k:"email",t:"text",ph:"torvalds@linux-foundation.org",label:"email"}],
+    build:v=>({email:v.email}), render:renderGravatar },
+  phone: { grp:"PEOPLE / OSINT", label:"Phone intel", path:"/phone",
+    d:"Offline phone parse: validity, region, carrier, line type",
+    fields:[{k:"number",t:"text",ph:"+14155552671",label:"number"},{k:"region",t:"text",ph:"US",label:"region",sm:1}],
+    build:v=>({number:v.number, region:v.region||undefined}), render:renderPhone },
+  verify: { grp:"PEOPLE / OSINT", label:"Verify email", path:"/verify-email",
+    d:"Syntax + role/disposable/freemail/alias flags (offline, no SMTP)",
+    fields:[{k:"email",t:"text",ph:"patrick@stripe.com",label:"email"}],
+    build:v=>({email:v.email}), render:renderVerify },
+  directory: { grp:"DISCOVERY", label:"Directory", path:"/directory",
+    d:"Local businesses by category + location (name/phone/address/site)",
+    fields:[{k:"category",t:"text",ph:"plumbers",label:"category"},{k:"location",t:"text",ph:"Tulsa, OK",label:"location"},{k:"limit",t:"num",v:20,label:"limit",sm:1}],
+    build:v=>({category:v.category, location:v.location, limit:num(v.limit)}), render:renderDirectory },
+};
+
+const num = x => { const n=parseInt(x,10); return isNaN(n)?undefined:n; };
+const esc = s => (s==null?"":String(s)).replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));
+const $ = (t,c,h)=>{const e=document.createElement(t); if(c)e.className=c; if(h!=null)e.innerHTML=h; return e;};
+
+// ---- nav ----
+const nav = document.getElementById("nav");
+let curTool = "extract";
+(function buildNav(){
+  let g=null;
+  for(const [id,t] of Object.entries(T)){
+    if(t.grp!==g){ g=t.grp; nav.appendChild($("div","grp",g)); }
+    const b=$("button",id===curTool?"on":"", `${esc(t.label)}<span class="d">${esc(t.d.slice(0,42))}${t.d.length>42?"…":""}</span>`);
+    b.onclick=()=>selectTool(id);
+    b.dataset.id=id; nav.appendChild(b);
+  }
+})();
+
+function selectTool(id){
+  curTool=id;
+  [...nav.querySelectorAll("button")].forEach(b=>b.classList.toggle("on", b.dataset.id===id));
+  drawTool(id);
+}
+
+// ---- main / form ----
+const main = document.getElementById("main");
+function drawTool(id){
+  const t=T[id];
+  main.innerHTML="";
+  main.appendChild($("h2","tool-h",esc(t.label)));
+  main.appendChild($("div","tool-sub",t.d));
+  const form=document.createElement("form");
+  for(const f of t.fields){
+    const fld=$("div","fld"+(f.sm?" sm":""));
+    fld.appendChild($("label",null,esc(f.label)));
+    let inp;
+    if(f.t==="textarea"){ inp=document.createElement("textarea"); }
+    else { inp=document.createElement("input"); inp.type=f.t==="num"?"number":"text"; }
+    if(f.ph) inp.placeholder=f.ph;
+    if(f.v!=null) inp.value=f.v;
+    inp.dataset.k=f.k; fld.appendChild(inp); form.appendChild(fld);
+  }
+  const btn=$("button","run","Run ▸"); btn.type="submit"; form.appendChild(btn);
+  form.onsubmit=e=>{e.preventDefault(); run(id,form,btn);};
+  main.appendChild(form);
+  main.appendChild($("div","result","",)).id="result";
+  document.getElementById("result").appendChild($("div","empty","Run a query to see results."));
+}
+
+async function run(id,form,btn){
+  const t=T[id];
+  const v={}; form.querySelectorAll("[data-k]").forEach(i=>v[i.dataset.k]=i.value);
+  const body=t.build(v);
+  const res=document.getElementById("result");
+  btn.disabled=true; const old=btn.textContent; btn.innerHTML='<span class="spin">◔</span> running';
+  const t0=performance.now();
+  try{
+    const r=await fetch(API+t.path,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
+    const data=await r.json();
+    const wall=Math.round(performance.now()-t0);
+    res.innerHTML="";
+    if(!r.ok || data.error){ res.appendChild($("div","err",esc(data.error||("HTTP "+r.status)))); }
+    else {
+      const meta=$("div","meta");
+      meta.innerHTML=`<span class="ms">${data._ms??"?"}ms</span> server · <span>${wall}ms</span> wall`;
+      const tog=$("span","rawtog","raw json ▾"); meta.appendChild(tog);
+      res.appendChild(meta);
+      const rendered=$("div"); try{ t.render(data,rendered); }catch(e){ rendered.appendChild($("div","err","render error: "+esc(e.message))); }
+      res.appendChild(rendered);
+      const raw=$("pre","raw",esc(JSON.stringify(data,null,2))); raw.style.display="none"; res.appendChild(raw);
+      tog.onclick=()=>{const on=raw.style.display==="none"; raw.style.display=on?"block":"none"; tog.textContent=on?"raw json ▴":"raw json ▾";};
+    }
+  }catch(e){ res.innerHTML=""; res.appendChild($("div","err","request failed: "+esc(e.message))); }
+  finally{ btn.disabled=false; btn.textContent=old; }
+}
+
+// ---- renderers ----
+function tbl(cols, rows, cell){
+  const wrap=$("div"); const table=document.createElement("table");
+  table.appendChild($("tr",null,cols.map(c=>`<th>${esc(c)}</th>`).join("")));
+  rows.forEach(r=>{ const tr=document.createElement("tr"); tr.innerHTML=cell(r); table.appendChild(tr); });
+  wrap.appendChild(table); return wrap;
+}
+function card(title){ const c=$("div","card"); if(title)c.appendChild($("h3",null,esc(title))); return c; }
+function kv(pairs){ const dl=$("dl","kv"); for(const [k,val,big] of pairs){ dl.appendChild($("dt",null,esc(k))); dl.appendChild($("dd",big?"big":null,val==null?'<span class="muted">—</span>':esc(val))); } return dl; }
+function badge(n,txt){ return `<span class="count-badge">${n} ${txt}</span>`; }
+
+function renderExtract(d,el){
+  (d.results||[]).forEach(r=>{
+    const c=card(r.title||r.url);
+    c.appendChild(kv([["url",r.url],["published",r.publish_date],["markdown",r.markdown.length+" chars"],
+      ["emails",(r.emails||[]).join(", ")],["phones",(r.phones||[]).join(", ")],
+      ["socials",(r.socials||[]).length+" — "+(r.socials||[]).slice(0,3).join("  ")],
+      ["structured",(r.structured||[]).length+" schema.org entities"],
+      ["status", r.error?`⚠ ${r.error}`:"ok", false]]));
+    const mdBtn=$("span","rawtog","show markdown ▾"); mdBtn.style.cssText="cursor:pointer;font-size:11px;color:var(--dim);text-decoration:underline";
+    const md=$("div","md",esc(r.markdown)); md.style.display="none";
+    mdBtn.onclick=()=>{const on=md.style.display==="none"; md.style.display=on?"block":"none"; mdBtn.textContent=on?"hide markdown ▴":"show markdown ▾";};
+    c.appendChild(mdBtn); c.appendChild(md); el.appendChild(c);
+  });
+  (d.errors||[]).forEach(e=>el.appendChild($("div","err",`${esc(e.url)} — ${esc(e.reason||e.error)}`)));
+}
+function renderContact(d,el){
+  const cov=d.coverage||{};
+  const h=card(d.domain);
+  h.appendChild($("div","muted",`${badge((d.facts||[]).length,"facts")} · coverage ${cov.ok||0}/${cov.checked||0} pages ok`));
+  el.appendChild(h);
+  const em=(d.facts||[]).filter(f=>f.kind==="email"), ph=(d.facts||[]).filter(f=>f.kind==="phone");
+  if(em.length) el.appendChild(tbl(["email","type","corr","sources"], em.sort((a,b)=>b.corroboration-a.corroboration),
+    f=>`<td>${esc(f.value)}</td><td>${labelPill(f.labels)}</td><td class="corr">${f.corroboration}</td><td class="muted">${(f.sources||[]).length}×</td>`));
+  if(ph.length) el.appendChild(tbl(["phone","corr","sources"], ph.sort((a,b)=>b.corroboration-a.corroboration),
+    f=>`<td>${esc(f.value)}</td><td class="corr">${f.corroboration}</td><td class="muted">${(f.sources||[]).map(s=>s.method).join(", ")}</td>`));
+  const other=(d.facts||[]).filter(f=>f.kind!=="email"&&f.kind!=="phone");
+  if(other.length) el.appendChild(tbl(["value","kind","corr"], other, f=>`<td>${esc(f.value)}</td><td class="muted">${esc(f.kind)}</td><td class="corr">${f.corroboration}</td>`));
+}
+function labelPill(l){ l=l||{}; const et=l.email_type; if(!et) return ""; const cls=et==="owner"||et==="person"?"hot":et==="role"||et==="functional"?"warn":"";
+  return `<span class="pill ${cls}">${esc(et)}</span>`; }
+function renderIntel(d,el){
+  const g=d.modernness_grade||"?";
+  const c=card("Site intelligence");
+  c.appendChild(kv([["framework",d.framework],["builder",d.builder],["hosted builder",String(d.hosted_builder)],
+    ["responsive",String(d.responsive)],["https",String(d.https)],["copyright year",d.copyright_year],
+    ["domain age",d.domain_age_years!=null?d.domain_age_years+" yrs":null],
+    ["modernness",`${g}  (${d.modernness_score})`,true]]));
+  if((d.dated_signals||[]).length) c.appendChild($("div","muted","signals: "+d.dated_signals.map(esc).join(" · ")));
+  el.appendChild(c);
+}
+function renderFinancials(d,el){
+  const c=card(`${d.company}  ·  ${d.kind}`);
+  c.appendChild($("div","muted","sources: "+(d.sources_used||[]).map(esc).join(", ")));
+  el.appendChild(c);
+  const fin=(d.financials||{}).financials||{};
+  const usd=v=>v==null?null:(Math.abs(v.value)>=1e9?`$${(v.value/1e9).toFixed(2)}B`:Math.abs(v.value)>=1e6?`$${(v.value/1e6).toFixed(1)}M`:`$${v.value}`)+(v.form?` (${v.period_end||""} ${v.form})`:"");
+  if(Object.keys(fin).length){
+    const fc=card("Financials");
+    const peer=d.peer||{};
+    fc.appendChild(kv([["revenue",usd(fin.revenue),true],
+      ["  percentile",peer.percentile!=null?`${peer.percentile}th of ${peer.n_peers} filers`:null],
+      ["net income",usd(fin.net_income)],["assets",usd(fin.assets)],["cash",usd(fin.cash)]]));
+    el.appendChild(fc);
+  }
+  const m=d.market||{};
+  if(m.found) el.appendChild(card("Market").appendChild(kv([["price",`${m.price} ${m.currency}`,true],["exchange",m.exchange],["52wk",`${m.wk52_low} – ${m.wk52_high}`],["prev close",m.prev_close]]))&&el.lastChild);
+  const fund=(d.funding||{}).raises||[];
+  if(fund.length) el.appendChild(tbl(["filed","raised","of offering","entity"], fund, r=>`<td>${esc(r.filed)}</td><td class="corr">${usd({value:r.total_sold})||"?"}</td><td>${usd({value:r.total_offering})||"?"}</td><td class="muted">${esc((r.entity||"").slice(0,40))}</td>`));
+  const fl=(d.filings||{}).filings||[];
+  if(fl.length) el.appendChild(tbl(["form","date","desc"], fl.slice(0,8), r=>`<td><b>${esc(r.form)}</b></td><td>${esc(r.date)}</td><td class="muted">${esc((r.primary_doc_description||r.description||"").slice(0,50))}</td>`));
+  const idn=d.identity||{};
+  if(idn.found){ const ic=card("Legal identity"); ic.appendChild(kv([["LEI",idn.lei],["legal name",idn.legal_name],["jurisdiction",idn.jurisdiction],["status",idn.status]])); el.appendChild(ic); }
+  const wf=(d.facts||{}).facts||{};
+  if(Object.keys(wf).length){ const wc=card("Facts (Wikidata)"); wc.appendChild(kv(Object.entries(wf).slice(0,8).map(([k,v])=>[k,String(v)]))); el.appendChild(wc); }
+}
+function renderNews(d,el){
+  el.appendChild($("div","muted",badge(d.count,"items")));
+  el.appendChild(tbl(["signal","title","source","date"], d.items||[], r=>{
+    const sig=r.signal?`<span class="pill ${/fund|lead|m&a|secur/.test(r.signal)?"hot":""}">${esc(r.signal)}</span>`:"";
+    const t=r.extractable!==false?`<a href="${esc(r.url)}" target="_blank">${esc(r.title)}</a>`:esc(r.title);
+    return `<td>${sig}</td><td>${t}</td><td class="muted">${esc(r.source||r.provider)}</td><td class="muted">${esc(r.date||"")}</td>`;
+  }));
+}
+function renderJobs(d,el){
+  const c=card(`${d.company||""}`);
+  c.appendChild($("div","muted",`ATS: <b>${esc(d.ats||"none")}</b>${d.token?` · token ${esc(d.token)}`:""} · ${badge(d.count,"postings")}`));
+  el.appendChild(c);
+  el.appendChild(tbl(["title","department","location","posted"], (d.postings||[]).slice(0,60),
+    r=>`<td><a href="${esc(r.url)}" target="_blank">${esc(r.title)}</a></td><td class="muted">${esc(r.department||"")}</td><td class="muted">${esc(r.location||"")}</td><td class="muted">${esc(r.posted||"")}</td>`));
+}
+function renderProfiles(d,el){
+  const cov=d.coverage||{};
+  el.appendChild($("div","muted",`${badge(d.count,"accounts")} · ${cov.checked||0} sites checked`));
+  const found=(d.profiles||[]).filter(p=>!p.reserved);
+  el.appendChild(tbl(["site","value","kind","url"], found,
+    p=>`<td><b>${esc(p.site)}</b>${p.recency?' <span class="pill ok">active</span>':""}</td><td>${esc(p.value)}</td><td class="muted">${esc(p.kind)}</td><td><a href="${esc(p.url)}" target="_blank">${esc((p.url||"").replace(/^https?:\/\//,""))}</a></td>`));
+}
+function renderGravatar(d,el){
+  const c=card(d.display_name||d.name||d.email);
+  c.appendChild(kv([["exists",String(d.exists)],["name",d.name],["location",d.location],["about",d.about],["profile",d.profile_url]]));
+  if(d.avatar) { const img=document.createElement("img"); img.src=d.avatar; img.style.cssText="width:72px;height:72px;border-radius:4px;border:1.5px solid var(--line);float:right;margin:-60px 0 0"; c.insertBefore(img,c.firstChild); }
+  el.appendChild(c);
+  const acc=d.accounts||[];
+  if(acc.length) el.appendChild(tbl(["service","url"], acc, a=>`<td>${esc(a.service||a.shortname||"")}</td><td><a href="${esc(a.url)}" target="_blank">${esc(a.url)}</a></td>`));
+}
+function renderPhone(d,el){
+  const c=card(d.e164||d.input);
+  c.appendChild(kv([["valid",String(d.valid),d.valid],["region",d.region],["location",d.location],
+    ["country code",d.country_code],["carrier",d.carrier],["line type",d.line_type],["international",d.international]]));
+  el.appendChild(c);
+}
+function renderVerify(d,el){
+  const c=card(d.email);
+  const flag=(k,v)=>`<span class="pill ${v?"warn":"ok"}">${k}: ${v?"yes":"no"}</span>`;
+  c.appendChild(kv([["valid syntax",String(d.valid_syntax),d.valid_syntax],["domain",d.domain]]));
+  c.appendChild($("div",null,[flag("role",d.is_role),flag("disposable",d.is_disposable),flag("freemail",d.is_freemail),flag("alias",d.has_alias)].join(" ")));
+  el.appendChild(c);
+}
+function renderDirectory(d,el){
+  el.appendChild($("div","muted",badge(d.count,"businesses")));
+  el.appendChild(tbl(["name","phone","address","website"], d.businesses||[],
+    b=>`<td><b>${esc(b.name)}</b></td><td>${esc(b.phone||"")}</td><td class="muted">${esc(b.address||"")}</td><td>${b.website?`<a href="${esc(b.website)}" target="_blank">${esc(b.website.replace(/^https?:\/\/(www\.)?/,"").replace(/\/$/,""))}</a>`:""}</td>`));
+}
+
+// ---- health + boot ----
+fetch(API+"/health").then(r=>r.json()).then(h=>{
+  document.getElementById("health").innerHTML=`<b>●</b> ${esc(h.service)} v${esc(h.version)} · concurrency ${h.max_concurrency}`;
+}).catch(()=>{document.getElementById("health").innerHTML='<span style="color:var(--ox)">● offline</span>';});
+drawTool(curTool);
+</script>
+</body>
+</html>
