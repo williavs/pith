@@ -249,10 +249,12 @@ class Handler(BaseHTTPRequestHandler):
                 gate.release()
 
 
-def serve(port=8900):
-    print(f"pith → http://127.0.0.1:{port}  (console at /)  ·  max_concurrency={_MAX}")
+def serve(port=8900, host=None):
+    # default loopback-only; set PITH_HOST (e.g. a Tailscale IP) to expose on the fleet.
+    host = host or os.environ.get("PITH_HOST", "127.0.0.1")
+    print(f"pith → http://{host}:{port}  (console at /)  ·  max_concurrency={_MAX}")
     print("  POST /extract /contact /intel /directory /profiles /verify-email /gravatar /phone /news /jobs /financials")
-    ThreadingHTTPServer(("127.0.0.1", port), Handler).serve_forever()
+    ThreadingHTTPServer((host, port), Handler).serve_forever()
 
 
 if __name__ == "__main__":
