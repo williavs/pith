@@ -326,82 +326,20 @@ def _business_urls(results, limit):
     return urls
 
 
-def _parse_yp(html: str, limit: int) -> list[dict]:
-    """Parse YellowPages search results -> business records (name, phone, address, website)."""
-    import html as _h
-    out = []
-    for card in re.split(r'<div class="info">', html or "")[1:]:  # 1 card per business
-        name = re.search(r'class="business-name"[^>]*>([^<]+)', card)
-        if not name:
-            continue
-        phone = re.search(r'class="phone[s]?[^"]*"[^>]*>([^<]{7,20})', card)
-        adr = re.search(r'class="adr"[^>]*>([^<]+)', card)
-        if not adr:
-            st = re.search(r'class="street-address"[^>]*>([^<]+)', card)
-            lo = re.search(r'class="locality"[^>]*>([^<]+)', card)
-            addr = f"{st.group(1)} {lo.group(1)}" if st and lo else ""
-        else:
-            addr = adr.group(1)
-        site = re.search(r'href="(https?://(?!www\.yellowpages\.com)[^"]+)"[^>]*>\s*Website', card)
-        out.append({
-            "name": _h.unescape(name.group(1).strip()),
-            "phone": phone.group(1).strip() if phone else "",
-            "address": _h.unescape(addr.strip()),
-            "website": site.group(1) if site else "",
-        })
-        if len(out) >= limit:
-            break
-    return out
+def directory_search(category: str, location: str, limit: int = 30, sources="auto") -> list[dict]:
+    """Category+geo -> a structured business list (name/phone/address/website).
 
-
-def _fetch_directory_page(url: str) -> str:
-    from .core import _fetch_impersonate, _fetch_static, _fetch_js
-    for fetch in (_fetch_impersonate, _fetch_static, _fetch_js):  # YP rate-limits plain HTTP
-        try:
-            html = fetch(url)
-            if 'class="business-name"' in html:
-                return html
-        except Exception:
-            continue
-    return ""
-
-
-def directory_search(category: str, location: str, limit: int = 30) -> list[dict]:
-    """Category+geo -> a structured business list (name/phone/address/website), paginated,
-    from YellowPages AND SuperPages (both Thryv, same markup). Two sources fill each other's
-    gaps and cover for rate-limiting; results deduped by name + phone digits. Walks pages
-    until `limit` reached, so you can pull hundreds of local businesses per category+geo."""
-    from urllib.parse import quote_plus
-    ct, loc = quote_plus(category), quote_plus(location)
-    sources = [
-        f"https://www.yellowpages.com/search?search_terms={ct}&geo_location_terms={loc}",
-        f"https://www.superpages.com/search?search_terms={ct}&geo_location_terms={loc}",
-    ]
-    rows, seen = [], set()
-    for base in sources:
-        page = 1
-        while len(rows) < limit and page <= 40:            # 40-page ceiling per source
-            html = _fetch_directory_page(base + f"&page={page}")
-            if not html:
-                break
-            new = 0
-            for r in _parse_yp(html, 10 ** 6):
-                k = (r["name"].lower(), re.sub(r"\D", "", r["phone"]))  # dedup by name + phone digits
-                if not r["name"] or k in seen:
-                    continue
-                seen.add(k)
-                rows.append(r)
-                new += 1
-                if len(rows) >= limit:
-                    break
-            if new == 0:                                    # end of listings for this source
-                break
-            print(f"[directory] {base.split('//')[1].split('.')[1]} page {page}: {len(rows)} total",
-                  file=sys.stderr, flush=True)
-            page += 1
-        if len(rows) >= limit:
-            break
-    return rows[:limit]
+    Backed by pith.leads (OpenStreetMap/Overpass + Overture + optional keyed sources), which is
+    keyless, ToS-clean, and returns hundreds per query — it replaced the old YellowPages/SuperPages
+    scraper (thin, rate-limited, blocked on fresh IPs). Default `sources="overpass"` keeps this
+    fast + dependency-free; pass sources="auto" or a list for the full cross-source waterfall.
+    Return shape is unchanged (name/phone/address/website) for back-compat."""
+    from .leads import find_businesses
+    if sources == "auto":
+        sources = ["overpass"]      # fast keyless default; the app/CLI can opt into more sources
+    res = find_businesses(category, location, sources=sources, limit=limit)
+    return [{"name": b["name"], "phone": b["phone"], "address": b["address"], "website": b["website"]}
+            for b in res["businesses"]]
 
 
 def render_directory(rows, fmt):

@@ -77,22 +77,6 @@ def test_contact_evidence_surfaces_schema_person(monkeypatch):
     assert people == [("Jeff Smith", "Owner")]
 
 
-def test_parse_yp_extracts_records():
-    from pith.cli import _parse_yp
-    html = ('<div class="info"><a class="business-name" href="/x">D&amp;D Diamond</a>'
-            '<div class="links"><a href="https://ddconstruction.org/" target="_blank">Website</a></div>'
-            '<div class="phone">(380) 201-6642</div><p class="adr">186 Meadow Dr, Reynoldsburg, OH 43068</p></div>'
-            '<div class="info"><a class="business-name" href="/y">Acme HVAC</a>'
-            '<div class="links"><a href="https://www.yellowpages.com/mip/acme">Website</a></div>'
-            '<div class="phone">(614) 555-1212</div><p class="adr">1 Main St, Columbus, OH</p></div>')
-    rows = _parse_yp(html, 30)
-    assert rows[0]["name"] == "D&D Diamond" and rows[0]["phone"] == "(380) 201-6642"
-    assert rows[0]["website"] == "https://ddconstruction.org/"      # real external site
-    assert "Reynoldsburg" in rows[0]["address"]
-    assert rows[1]["name"] == "Acme HVAC" and rows[1]["website"] == ""  # YP-internal link -> not a website
-    assert len(_parse_yp(html, 1)) == 1                              # limit respected
-
-
 def test_business_urls_filters_dedups_limits():
     from pith.cli import _business_urls
     results = [
