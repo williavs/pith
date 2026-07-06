@@ -56,10 +56,17 @@ get the contacts," they mean paid B2B data, not Yelp/Google.
    corroborates automatically.
 3. **Don't expect any free/keyed source to hand you verified decision-makers.** That's paid.
 
-## Free optimization still on the table
+## Correction — rating/hours/founded/employees are NOT purely keyed/paid
 
-- **hours = 0%** because pith doesn't currently capture schema.org `openingHours` from
-  LocalBusiness entities. Many sites publish it. Capturing it would add a free firmographic field.
-- **named people without jobTitle** are extracted but not surfaced (only jobTitle-bearing Person
-  entities count as decision-makers). Surfacing all named people as candidate contacts would help
-  where the team is listed but not schema-tagged with titles.
+The gap table above (measured before the fix) marked rating/employees/founded as keyed/paid. That
+was an artifact of pith's extractor using a prescriptive field allowlist that **dropped**
+`aggregateRating`, `openingHours`, `priceRange`, `foundingDate`, `numberOfEmployees`, `geo` from
+the JSON-LD. Local businesses often publish these on their own site **for free** — pith just
+wasn't looking. Now captured (`pith.extract.firmographics`) and surfaced in the leadgen app:
+e.g. a Phoenix dentist yields `rating 5.0 (4)` + `hours Mo-Th 06:00-18:00 …` with no key. So for
+storefront businesses these are free-when-published; a keyed API (Yelp/Google) is only needed when
+the site itself doesn't publish schema (common for big B2B, rare for local).
+
+- **named people without jobTitle** are extracted but not surfaced as decision-makers (only
+  jobTitle-bearing Person entities count). Surfacing all named people as candidate contacts would
+  help where the team is listed but not schema-tagged with titles.

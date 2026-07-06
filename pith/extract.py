@@ -190,7 +190,55 @@ _DROP_ORG_PARENT = frozenset({"publisher", "sponsor", "brand", "funder", "provid
 # structured() KEEPS them (labeled rel=...); a consumer scoping "the business's OWN contact"
 # skips them — the data is surfaced, only the attribution is scoped.
 _THIRD_PARTY_REL = _DROP_PARENT | _DROP_ORG_PARENT
-_KEEP = ("@type", "name", "jobTitle", "email", "telephone", "url", "sameAs", "worksFor", "address", "description")
+# Don't curate a field allowlist (prescriptive — it silently drops openingHours, aggregateRating,
+# priceRange, geo, foundingDate, numberOfEmployees the business already published for free). Keep
+# every scalar/list field, plus the nested dicts downstream consumes, and flatten the high-value
+# nested objects to clean values.
+_DROP_FIELDS = frozenset({"@context", "@id", "@graph", "mainEntityOfPage", "potentialAction"})
+_KEEP_NESTED = ("address", "worksFor", "contactPoint")   # dicts downstream reads
+
+
+def _fmt_hours(spec) -> str:
+    """openingHoursSpecification (list of {dayOfWeek, opens, closes}) -> 'Mo 09:00-17:00; ...'."""
+    out = []
+    for s in spec if isinstance(spec, list) else [spec]:
+        if not isinstance(s, dict):
+            continue
+        d = s.get("dayOfWeek", "")
+        d = ",".join(str(x).split("/")[-1][:2] for x in d) if isinstance(d, list) else str(d).split("/")[-1][:2]
+        o = s.get("opens", "")
+        if d and o:
+            out.append(f"{d} {o}-{s.get('closes', '')}")
+    return "; ".join(out)
+
+
+def _simplify(e: dict) -> dict:
+    """schema.org entity -> its useful data, WITHOUT a prescriptive field list. Every scalar and
+    list-of-scalars passes through (general: new fields aren't lost), the nested contact dicts are
+    kept, and the high-value nested objects (rating, geo, hours) are flattened to clean scalars."""
+    out = {k: v for k, v in e.items()
+           if k not in _DROP_FIELDS
+           and (isinstance(v, (str, int, float, bool)) or (isinstance(v, list) and all(isinstance(x, str) for x in v)))}
+    for k in _KEEP_NESTED:
+        if k in e and k not in out:
+            out[k] = e[k]
+    ar = e.get("aggregateRating")
+    if isinstance(ar, dict) and ar.get("ratingValue"):
+        out["rating"] = str(ar["ratingValue"])
+        if ar.get("reviewCount") or ar.get("ratingCount"):
+            out["review_count"] = str(ar.get("reviewCount") or ar.get("ratingCount"))
+    geo = e.get("geo")
+    if isinstance(geo, dict) and geo.get("latitude"):
+        out["lat"], out["lon"] = str(geo["latitude"]), str(geo.get("longitude", ""))
+    if not out.get("hours"):
+        oh = e.get("openingHours")
+        if isinstance(oh, str):
+            out["hours"] = oh
+        elif isinstance(oh, list):
+            out["hours"] = "; ".join(x for x in oh if isinstance(x, str))
+        elif e.get("openingHoursSpecification"):
+            out["hours"] = _fmt_hours(e["openingHoursSpecification"])
+    return out
 
 _META = [("og:title", "title"), ("og:description", "description"), ("og:site_name", "site"),
          ("og:type", "type"), ("article:author", "author"), ("article:published_time", "published"),
@@ -291,7 +339,7 @@ def structured(html: str) -> list[dict]:
             # Keep EVERY real entity — never hide data. Tag its relationship to the page so a
             # consumer can scope (a review author, a publisher org) WITHOUT the core deciding
             # for them. `rel`: "" = top-level/@graph (the page's subject); else the parent key.
-            kept = {k: e[k] for k in _KEEP if k in e}
+            kept = _simplify(e)
             kept["rel"] = pkey
             if is_person and not kept.get("jobTitle") and pkey in _PARENT_TITLE:
                 kept["jobTitle"] = _PARENT_TITLE[pkey]   # schema placed them under founder/owner/... = their title
@@ -300,6 +348,23 @@ def structured(html: str) -> list[dict]:
                 seen.add(key)
                 out.append(kept)
     return out
+
+
+def firmographics(structured: list[dict]) -> dict:
+    """A business's OWN free firmographics from its schema.org Org/LocalBusiness entity — rating,
+    review_count, hours, price, founded, employees, geo — whatever it published. These are the
+    fields the old field-allowlist silently dropped; often present on local-business sites for free
+    (fills the rating/hours/founded/employees 'gaps' without a keyed API)."""
+    want = ("rating", "review_count", "hours", "priceRange", "foundingDate",
+            "numberOfEmployees", "lat", "lon", "areaServed")
+    got: dict = {}
+    for e in structured:                       # merge across all org entities (rating + hours often split)
+        types = e.get("@type") if isinstance(e.get("@type"), list) else [e.get("@type")]
+        if any(t in _ORG_TYPES for t in types):
+            for k in want:
+                if e.get(k) and k not in got:
+                    got[k] = e[k]
+    return got
 
 
 def _assemble_address(addr) -> str:

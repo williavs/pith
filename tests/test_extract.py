@@ -1,6 +1,21 @@
 """Per-extractor precision/recall — every filter must keep the real thing AND drop the junk.
 Each test names KEEP cases (recall: must not be cut) and DROP cases (precision: must not leak)."""
-from pith.extract import emails, phones, socials, structured, meta, enrich, cfemails, _decode_cfemail
+from pith.extract import emails, phones, socials, structured, meta, enrich, cfemails, _decode_cfemail, firmographics
+
+
+def test_structured_captures_free_business_fields():
+    # the field-allowlist used to drop these; a local business publishes them for free.
+    html = ('<script type="application/ld+json">{"@context":"http://schema.org","@type":"Dentist",'
+            '"name":"Acme Dental","telephone":"602-555-1000","priceRange":"$$",'
+            '"aggregateRating":{"@type":"AggregateRating","ratingValue":"4.8","reviewCount":"212"},'
+            '"geo":{"@type":"GeoCoordinates","latitude":"33.5","longitude":"-112.0"},'
+            '"openingHours":"Mo-Fr 08:00-17:00","foundingDate":"2009","numberOfEmployees":"14"}</script>')
+    e = structured(html)[0]
+    assert e["name"] == "Acme Dental" and e["telephone"] == "602-555-1000"   # existing fields still there
+    assert e["rating"] == "4.8" and e["review_count"] == "212" and e["hours"] == "Mo-Fr 08:00-17:00"
+    fg = firmographics(structured(html))
+    assert fg["rating"] == "4.8" and fg["foundingDate"] == "2009" and fg["numberOfEmployees"] == "14"
+    assert fg["priceRange"] == "$$" and fg["lat"] == "33.5"
 
 
 def _cf_encode(email, key=0x42):

@@ -24,8 +24,8 @@ from pith.leads import find_businesses, PROVIDERS          # noqa: E402
 # ---------------------------------------------------------------------------
 
 LEAD_COLS = ["name", "confidence", "sources", "phone", "website", "address", "category",
-             "email", "owner_email", "decision_maker", "title", "team", "linkedin", "socials",
-             "extra_phones", "framework", "modernness", "enriched"]
+             "email", "owner_email", "decision_maker", "title", "team", "rating", "hours",
+             "linkedin", "socials", "extra_phones", "framework", "modernness", "enriched"]
 
 
 def _flatten(biz: dict) -> dict:
@@ -39,8 +39,8 @@ def _flatten(biz: dict) -> dict:
         "address": biz.get("address", ""),
         "category": biz.get("category", ""),
         "email": "", "owner_email": "", "decision_maker": "", "title": "", "team": "",
-        "linkedin": "", "socials": "", "extra_phones": "", "framework": "", "modernness": "",
-        "enriched": False,
+        "rating": "", "hours": "", "linkedin": "", "socials": "", "extra_phones": "",
+        "framework": "", "modernness": "", "enriched": False,
     }
 
 
@@ -79,12 +79,16 @@ def enrich_contacts(row: dict) -> dict:
     r = Extractor().extract([site]).results[0]
     socials = [s for s in r.socials if any(h in s for h in _SOCIAL_HOSTS)]
     linkedin = next((s for s in socials if "linkedin.com" in s), "")
+    from pith.extract import firmographics
+    fg = firmographics(r.structured)          # free rating/hours from the site's own LocalBusiness schema
+    rating = f"{fg['rating']}" + (f" ({fg['review_count']})" if fg.get("review_count") else "") if fg.get("rating") else ""
     return {
         "email": (best.value if best else "") or (emails[0] if emails else ""),
         "owner_email": (dm_email or (best.value if best else "")),
         "decision_maker": dm, "title": title,
         "team": " · ".join(f"{p['name']}" + (f" ({p['title'][:20]})" if p["title"] else "")
                             for p in roster[:4]),
+        "rating": rating, "hours": fg.get("hours", ""),
         "linkedin": linkedin,
         "socials": ", ".join(socials)[:160],
         "extra_phones": ", ".join(p for p in phones if p != row.get("phone"))[:120],
