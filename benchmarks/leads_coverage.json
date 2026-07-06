@@ -1,0 +1,482 @@
+{
+  "config": {
+    "categories": [
+      "dentists",
+      "restaurants",
+      "plumbers",
+      "gyms"
+    ],
+    "cities": [
+      "Phoenix, AZ",
+      "Austin, TX",
+      "Portland, OR"
+    ],
+    "overture_city": "Phoenix, AZ",
+    "radius_km": 3,
+    "limit": 100
+  },
+  "cells": [
+    {
+      "category": "dentists",
+      "city": "Phoenix, AZ",
+      "overture_included": true,
+      "providers": {
+        "overpass": {
+          "count": 3,
+          "pct_website": 0.0,
+          "pct_phone": 0.0,
+          "pct_email": 0.0,
+          "ran": true,
+          "raw_count": 3
+        },
+        "overture": {
+          "count": 29,
+          "pct_website": 96.6,
+          "pct_phone": 96.6,
+          "pct_email": 58.6,
+          "ran": true,
+          "raw_count": 32
+        }
+      },
+      "merged": {
+        "count": 31,
+        "pct_website": 90.3,
+        "pct_phone": 90.3,
+        "pct_email": 54.8,
+        "agreement_rate": 3.2,
+        "corroborated_count": 1,
+        "mean_confidence": 0.66,
+        "ran": [
+          "overpass",
+          "overture"
+        ],
+        "raw_counts": {
+          "overpass": 3,
+          "overture": 32
+        }
+      },
+      "errors": {},
+      "geo": "Phoenix, Maricopa County, Arizona, United States"
+    },
+    {
+      "category": "dentists",
+      "city": "Austin, TX",
+      "overture_included": false,
+      "providers": {
+        "overpass": {
+          "count": 21,
+          "pct_website": 33.3,
+          "pct_phone": 33.3,
+          "pct_email": 14.3,
+          "ran": true,
+          "raw_count": 21
+        }
+      },
+      "merged": {
+        "count": 21,
+        "pct_website": 33.3,
+        "pct_phone": 33.3,
+        "pct_email": 14.3,
+        "agreement_rate": 0.0,
+        "corroborated_count": 0,
+        "mean_confidence": 0.412,
+        "ran": [
+          "overpass"
+        ],
+        "raw_counts": {
+          "overpass": 21
+        }
+      },
+      "errors": {},
+      "geo": "Austin, Travis County, Texas, United States"
+    },
+    {
+      "category": "dentists",
+      "city": "Portland, OR",
+      "overture_included": false,
+      "providers": {
+        "overpass": {
+          "count": 29,
+          "pct_website": 89.7,
+          "pct_phone": 65.5,
+          "pct_email": 6.9,
+          "ran": true,
+          "raw_count": 29
+        }
+      },
+      "merged": {
+        "count": 29,
+        "pct_website": 89.7,
+        "pct_phone": 65.5,
+        "pct_email": 6.9,
+        "agreement_rate": 0.0,
+        "corroborated_count": 0,
+        "mean_confidence": 0.412,
+        "ran": [
+          "overpass"
+        ],
+        "raw_counts": {
+          "overpass": 29
+        }
+      },
+      "errors": {},
+      "geo": "Portland, Multnomah County, Oregon, United States"
+    },
+    {
+      "category": "restaurants",
+      "city": "Phoenix, AZ",
+      "overture_included": true,
+      "providers": {
+        "overpass": {
+          "count": 100,
+          "pct_website": 41.0,
+          "pct_phone": 43.0,
+          "pct_email": 2.0,
+          "ran": true,
+          "raw_count": 128
+        },
+        "overture": {
+          "count": 100,
+          "pct_website": 95.0,
+          "pct_phone": 100.0,
+          "pct_email": 66.0,
+          "ran": true,
+          "raw_count": 300
+        }
+      },
+      "merged": {
+        "count": 100,
+        "pct_website": 96.0,
+        "pct_phone": 100.0,
+        "pct_email": 68.0,
+        "agreement_rate": 43.0,
+        "corroborated_count": 43,
+        "mean_confidence": 0.752,
+        "ran": [
+          "overpass",
+          "overture"
+        ],
+        "raw_counts": {
+          "overpass": 128,
+          "overture": 300
+        }
+      },
+      "errors": {},
+      "geo": "Phoenix, Maricopa County, Arizona, United States"
+    },
+    {
+      "category": "restaurants",
+      "city": "Austin, TX",
+      "overture_included": false,
+      "providers": {
+        "overpass": {
+          "count": 100,
+          "pct_website": 55.0,
+          "pct_phone": 33.0,
+          "pct_email": 4.0,
+          "ran": true,
+          "raw_count": 292
+        }
+      },
+      "merged": {
+        "count": 100,
+        "pct_website": 55.0,
+        "pct_phone": 33.0,
+        "pct_email": 4.0,
+        "agreement_rate": 0.0,
+        "corroborated_count": 0,
+        "mean_confidence": 0.412,
+        "ran": [
+          "overpass"
+        ],
+        "raw_counts": {
+          "overpass": 292
+        }
+      },
+      "errors": {},
+      "geo": "Austin, Travis County, Texas, United States"
+    },
+    {
+      "category": "restaurants",
+      "city": "Portland, OR",
+      "overture_included": false,
+      "providers": {
+        "overpass": {
+          "count": 100,
+          "pct_website": 79.0,
+          "pct_phone": 54.0,
+          "pct_email": 4.0,
+          "ran": true,
+          "raw_count": 296
+        }
+      },
+      "merged": {
+        "count": 100,
+        "pct_website": 79.0,
+        "pct_phone": 54.0,
+        "pct_email": 4.0,
+        "agreement_rate": 0.0,
+        "corroborated_count": 0,
+        "mean_confidence": 0.412,
+        "ran": [
+          "overpass"
+        ],
+        "raw_counts": {
+          "overpass": 296
+        }
+      },
+      "errors": {},
+      "geo": "Portland, Multnomah County, Oregon, United States"
+    },
+    {
+      "category": "plumbers",
+      "city": "Phoenix, AZ",
+      "overture_included": true,
+      "providers": {
+        "overpass": {
+          "count": 3,
+          "pct_website": 0.0,
+          "pct_phone": 0.0,
+          "pct_email": 0.0,
+          "ran": true,
+          "raw_count": 3
+        },
+        "overture": {
+          "count": 0,
+          "pct_website": 0.0,
+          "pct_phone": 0.0,
+          "pct_email": 0.0,
+          "ran": true,
+          "raw_count": 0
+        }
+      },
+      "merged": {
+        "count": 3,
+        "pct_website": 0.0,
+        "pct_phone": 0.0,
+        "pct_email": 0.0,
+        "agreement_rate": 0.0,
+        "corroborated_count": 0,
+        "mean_confidence": 0.412,
+        "ran": [
+          "overture",
+          "overpass"
+        ],
+        "raw_counts": {
+          "overture": 0,
+          "overpass": 3
+        }
+      },
+      "errors": {},
+      "geo": "Phoenix, Maricopa County, Arizona, United States"
+    },
+    {
+      "category": "plumbers",
+      "city": "Austin, TX",
+      "overture_included": false,
+      "providers": {
+        "overpass": {
+          "count": 0,
+          "pct_website": 0.0,
+          "pct_phone": 0.0,
+          "pct_email": 0.0,
+          "ran": true,
+          "raw_count": 0
+        }
+      },
+      "merged": {
+        "count": 0,
+        "pct_website": 0.0,
+        "pct_phone": 0.0,
+        "pct_email": 0.0,
+        "agreement_rate": 0.0,
+        "corroborated_count": 0,
+        "mean_confidence": 0.0,
+        "ran": [
+          "overpass"
+        ],
+        "raw_counts": {
+          "overpass": 0
+        }
+      },
+      "errors": {},
+      "geo": "Austin, Travis County, Texas, United States"
+    },
+    {
+      "category": "plumbers",
+      "city": "Portland, OR",
+      "overture_included": false,
+      "providers": {
+        "overpass": {
+          "count": 0,
+          "pct_website": 0.0,
+          "pct_phone": 0.0,
+          "pct_email": 0.0,
+          "ran": true,
+          "raw_count": 0
+        }
+      },
+      "merged": {
+        "count": 0,
+        "pct_website": 0.0,
+        "pct_phone": 0.0,
+        "pct_email": 0.0,
+        "agreement_rate": 0.0,
+        "corroborated_count": 0,
+        "mean_confidence": 0.0,
+        "ran": [
+          "overpass"
+        ],
+        "raw_counts": {
+          "overpass": 0
+        }
+      },
+      "errors": {},
+      "geo": "Portland, Multnomah County, Oregon, United States"
+    },
+    {
+      "category": "gyms",
+      "city": "Phoenix, AZ",
+      "overture_included": true,
+      "providers": {
+        "overpass": {
+          "count": 9,
+          "pct_website": 66.7,
+          "pct_phone": 44.4,
+          "pct_email": 0.0,
+          "ran": true,
+          "raw_count": 9
+        },
+        "overture": {
+          "count": 53,
+          "pct_website": 81.1,
+          "pct_phone": 83.0,
+          "pct_email": 60.4,
+          "ran": true,
+          "raw_count": 58
+        }
+      },
+      "merged": {
+        "count": 57,
+        "pct_website": 78.9,
+        "pct_phone": 78.9,
+        "pct_email": 56.1,
+        "agreement_rate": 8.8,
+        "corroborated_count": 5,
+        "mean_confidence": 0.618,
+        "ran": [
+          "overture",
+          "overpass"
+        ],
+        "raw_counts": {
+          "overture": 58,
+          "overpass": 9
+        }
+      },
+      "errors": {},
+      "geo": "Phoenix, Maricopa County, Arizona, United States"
+    },
+    {
+      "category": "gyms",
+      "city": "Austin, TX",
+      "overture_included": false,
+      "providers": {
+        "overpass": {
+          "count": 21,
+          "pct_website": 28.6,
+          "pct_phone": 33.3,
+          "pct_email": 0.0,
+          "ran": true,
+          "raw_count": 21
+        }
+      },
+      "merged": {
+        "count": 21,
+        "pct_website": 28.6,
+        "pct_phone": 33.3,
+        "pct_email": 0.0,
+        "agreement_rate": 0.0,
+        "corroborated_count": 0,
+        "mean_confidence": 0.412,
+        "ran": [
+          "overpass"
+        ],
+        "raw_counts": {
+          "overpass": 21
+        }
+      },
+      "errors": {},
+      "geo": "Austin, Travis County, Texas, United States"
+    },
+    {
+      "category": "gyms",
+      "city": "Portland, OR",
+      "overture_included": false,
+      "providers": {
+        "overpass": {
+          "count": 25,
+          "pct_website": 80.0,
+          "pct_phone": 32.0,
+          "pct_email": 4.0,
+          "ran": true,
+          "raw_count": 25
+        }
+      },
+      "merged": {
+        "count": 25,
+        "pct_website": 80.0,
+        "pct_phone": 32.0,
+        "pct_email": 4.0,
+        "agreement_rate": 0.0,
+        "corroborated_count": 0,
+        "mean_confidence": 0.412,
+        "ran": [
+          "overpass"
+        ],
+        "raw_counts": {
+          "overpass": 25
+        }
+      },
+      "errors": {},
+      "geo": "Portland, Multnomah County, Oregon, United States"
+    }
+  ],
+  "source_meta": {
+    "overpass": {
+      "update_frequency": "continuous (crowdsourced; minute-level edits, no SLA)",
+      "reliability": "existence/location strong; contact tags ~30% present; trades thinner than storefronts",
+      "license": "ODbL (attribution + share-alike)",
+      "needs_key": false
+    },
+    "overture": {
+      "update_frequency": "monthly release (Linux Foundation; ~25 data partners)",
+      "reliability": "confidence-scored + source lineage; broadest coverage; phone/website richer than OSM",
+      "license": "CDLA-Permissive 2.0 (commercial-clean, no share-alike)",
+      "needs_key": false
+    },
+    "fsq_open": {
+      "update_frequency": "monthly release (Foundry/Foursquare open data on Hugging Face)",
+      "reliability": "~100M global POIs; strong urban coverage; category-rich",
+      "license": "Apache-2.0 (commercial-clean)",
+      "needs_key": false
+    },
+    "yelp": {
+      "update_frequency": "live API (Yelp-maintained; near real-time)",
+      "reliability": "strong US SMB coverage, phone + address + ratings; no website/email in payload",
+      "license": "Yelp Fusion ToS \u2014 display use; storing/reselling restricted",
+      "needs_key": true
+    },
+    "google": {
+      "update_frequency": "live API (Google Places, New; best freshness)",
+      "reliability": "highest completeness + freshness; phone + website + address",
+      "license": "Google Places ToS \u2014 caching limited, storing/reselling restricted",
+      "needs_key": true
+    },
+    "fsq_api": {
+      "update_frequency": "live API (Foursquare Places; near real-time)",
+      "reliability": "global POIs, category-rich; phone + website + address",
+      "license": "Foursquare Places API ToS \u2014 attribution; storage limited",
+      "needs_key": true
+    }
+  }
+}

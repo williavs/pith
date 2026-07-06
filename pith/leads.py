@@ -51,6 +51,25 @@ def _get(url: str, data: bytes | None = None, headers: dict | None = None, timeo
     return urllib.request.urlopen(req, timeout=timeout).read()
 
 
+def _get_retry(url: str, data: bytes | None = None, headers: dict | None = None,
+               timeout: int = 60, tries: int = 3, backoff=(2, 5)) -> bytes:
+    """_get with short retry on throttle/transient (429/502/503/504). The free Overpass endpoint
+    has no SLA and 429/504s under bursty load — a bare call turns that into a false empty result.
+    Backoff stays short so an interactive query doesn't hang. ponytail: fixed schedule, not jittered."""
+    import urllib.error
+    for i in range(tries):
+        try:
+            return _get(url, data=data, headers=headers, timeout=timeout)
+        except urllib.error.HTTPError as e:
+            if e.code not in (429, 502, 503, 504) or i == tries - 1:
+                raise
+        except (urllib.error.URLError, TimeoutError):
+            if i == tries - 1:
+                raise
+        time.sleep(backoff[min(i, len(backoff) - 1)])
+    raise RuntimeError("unreachable")
+
+
 def geocode(location: str) -> dict:
     """Location string -> {lat, lon, bbox:(s,w,n,e), display}. Keyless via OSM Nominatim.
     Nominatim asks for <=1 req/s and a real UA; results are cached per process."""
@@ -318,7 +337,7 @@ class OverpassProvider:
             else:
                 parts.append(f'nwr[{t}]({s},{w},{n},{e});')
         q = f"[out:json][timeout:50];({''.join(parts)});out center tags meta {spec.limit * 3};"
-        data = json.loads(_get(self.endpoint, urllib.parse.urlencode({"data": q}).encode(), timeout=90))
+        data = json.loads(_get_retry(self.endpoint, urllib.parse.urlencode({"data": q}).encode(), timeout=90))
         out = []
         for el in data.get("elements", []):
             t = el.get("tags", {})

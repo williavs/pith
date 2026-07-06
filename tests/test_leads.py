@@ -120,6 +120,34 @@ def test_keyed_provider_reads_key_from_config():
     assert _key_for(y, {"PITH_YELP_KEY": "sk-test"}) == "sk-test"
 
 
+def test_get_retry_recovers_from_throttle(monkeypatch):
+    import urllib.error
+    from pith.leads import _get_retry
+    calls = {"n": 0}
+
+    def flaky(url, data=None, headers=None, timeout=60):
+        calls["n"] += 1
+        if calls["n"] < 3:                              # 429 twice, then succeed
+            raise urllib.error.HTTPError(url, 429, "Too Many Requests", {}, None)
+        return b"OK"
+
+    monkeypatch.setattr("pith.leads._get", flaky)
+    assert _get_retry("http://x", backoff=(0, 0)) == b"OK" and calls["n"] == 3
+
+
+def test_get_retry_reraises_non_throttle(monkeypatch):
+    import urllib.error
+    import pytest as _pt
+    from pith.leads import _get_retry
+
+    def not_found(url, data=None, headers=None, timeout=60):
+        raise urllib.error.HTTPError(url, 404, "Not Found", {}, None)
+
+    monkeypatch.setattr("pith.leads._get", not_found)
+    with _pt.raises(urllib.error.HTTPError):            # 404 is not transient -> no retry
+        _get_retry("http://x", backoff=(0, 0))
+
+
 def test_register_custom_provider():
     class Fake:
         name = "fake"; needs_key = False; key_env = ""; weight = 0.6
