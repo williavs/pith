@@ -30,6 +30,12 @@ def test_resolve_cik(monkeypatch):
     assert F._resolve_cik("Apple Inc.")[1] == "AAPL"
     assert F._resolve_cik("gitlab")[2] == "Gitlab Inc."      # substring name
     assert F._resolve_cik("Stripe") is None                 # private -> no CIK
+    # a mixed-case NAME must not collide with a coincidental ticker (Ramp -> ticker RAMP/LiveRamp)
+    monkeypatch.setattr(F, "_TICKERS", [{"cik_str": 733269, "ticker": "RAMP", "title": "LiveRamp Holdings, Inc."},
+                                        {"cik_str": 320193, "ticker": "AAPL", "title": "Apple Inc."}])
+    assert F._resolve_cik("Ramp") is None                   # private co, not LiveRamp
+    assert F._resolve_cik("AAPL")[1] == "AAPL"              # deliberate all-caps ticker still resolves
+    assert F._resolve_cik("LiveRamp Holdings, Inc.")[1] == "RAMP"   # real title still matches
 
 
 def test_days_and_form_signal():

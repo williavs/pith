@@ -71,10 +71,16 @@ def _resolve_cik(company, ticker=None):
     if ticker:
         hit = next((c for c in m if c["ticker"].lower() == ticker.lower()), None)
     else:
-        q = (company or "").strip().lower()
-        hit = (next((c for c in m if c["ticker"].lower() == q), None)
+        raw = (company or "").strip()
+        q = raw.lower()
+        # A NAME is not a ticker: match tickers only for deliberate all-caps input ("AAPL"), so the
+        # company "Ramp" no longer collides with ticker RAMP (LiveRamp). Then exact title, then a
+        # WHOLE-WORD title match (a raw substring made "Ramp" match "Trampoline").
+        looks_ticker = raw.isupper() and 1 <= len(q) <= 5
+        wb = re.compile(rf"\b{re.escape(q)}\b") if q else None
+        hit = ((next((c for c in m if c["ticker"].lower() == q), None) if looks_ticker else None)
                or next((c for c in m if c["title"].lower() == q), None)
-               or next((c for c in m if q and q in c["title"].lower()), None))
+               or next((c for c in m if wb and wb.search(c["title"].lower())), None))
     return (str(hit["cik_str"]).zfill(10), hit["ticker"], hit["title"]) if hit else None
 
 
