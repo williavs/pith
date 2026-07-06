@@ -76,7 +76,9 @@ def people(facts, include_third_party=False):
         if not include_third_party and (f.labels or {}).get("rel") in _THIRD_PARTY:
             continue
         out.append({"name": f.value, "title": (f.labels or {}).get("title", ""),
-                    "rel": (f.labels or {}).get("rel", ""), "corroboration": f.corroboration,
+                    "rel": (f.labels or {}).get("rel", ""),
+                    "emails": (f.labels or {}).get("emails", []),   # person-pattern emails matched to them
+                    "methods": f.methods, "corroboration": f.corroboration,
                     "sources": sorted({s.url for s in f.sources})})
     return sorted(out, key=lambda p: (-p["corroboration"], p["name"]))
 

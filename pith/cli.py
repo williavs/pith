@@ -17,6 +17,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict
 
 from .core import Extractor, Result, _needs_browser, _BROWSER_MAX_CONCURRENCY
+from .people import extract_people, is_probable_name
 
 log = logging.getLogger("pith")
 
@@ -79,8 +80,12 @@ def read_sitemap(url: str, match: str | None = None, limit: int | None = None) -
 
 
 # GTM-relevant sections: where decision-maker signal lives on a company site.
-_SECTIONS = ("about", "contact", "team", "leadership", "people", "our-team",
-             "company", "management", "founders", "staff", "careers", "jobs")
+_SECTIONS = ("about", "contact", "team", "leadership", "people", "our-team", "our-staff",
+             "company", "management", "founders", "staff", "careers", "jobs",
+             # profession-specific team pages the generic slugs miss (dental/legal/realty/medical)
+             "meet", "our-doctors", "doctors", "providers", "our-providers", "physicians",
+             "dentists", "attorneys", "our-attorneys", "lawyers", "agents", "our-agents",
+             "associates", "partners", "principals", "owners", "bios", "profiles", "our-people")
 
 
 def score_relevance(query: str, url: str, snippet: str = "") -> int:
@@ -257,9 +262,14 @@ def contact_evidence(website: str, workers: int = 4) -> dict:
     for r in out.results:                                 # schema.org Person -> a named contact
         for e in r.structured:
             types = e.get("@type") if isinstance(e.get("@type"), list) else [e.get("@type")]
-            if "Person" in types and e.get("name"):        # keep ALL people, labeled by relationship
+            if "Person" in types and is_probable_name(str(e.get("name", ""))):   # drop schema junk names ("[Name]", phrases)
                 obs.append((str(e["name"]), "name", Source(r.url, "schema.org"),
                             {"title": e.get("jobTitle", ""), "rel": e.get("rel", "")}))
+        # heuristic people from plain-HTML team pages — the majority sites don't schema-mark. Emitted
+        # only where a name sits next to a role, so precision stays high; labeled method=heuristic.
+        for p in extract_people(r.markdown, emails=r.emails, source_url=r.url):
+            obs.append((p["name"], "name", Source(r.url, "heuristic"),
+                        {"title": p["title"], "rel": "", "emails": p["emails"]}))
     # WHOIS registrant contact = another independent source
     whois = _whois_registrant(domain)
     if whois.get("email"):

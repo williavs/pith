@@ -24,7 +24,7 @@ from pith.leads import find_businesses, PROVIDERS          # noqa: E402
 # ---------------------------------------------------------------------------
 
 LEAD_COLS = ["name", "confidence", "sources", "phone", "website", "address", "category",
-             "email", "owner_email", "decision_maker", "title", "linkedin", "socials",
+             "email", "owner_email", "decision_maker", "title", "team", "linkedin", "socials",
              "extra_phones", "framework", "modernness", "enriched"]
 
 
@@ -38,8 +38,9 @@ def _flatten(biz: dict) -> dict:
         "website": biz.get("website", ""),
         "address": biz.get("address", ""),
         "category": biz.get("category", ""),
-        "email": "", "owner_email": "", "decision_maker": "", "title": "", "linkedin": "",
-        "socials": "", "extra_phones": "", "framework": "", "modernness": "", "enriched": False,
+        "email": "", "owner_email": "", "decision_maker": "", "title": "", "team": "",
+        "linkedin": "", "socials": "", "extra_phones": "", "framework": "", "modernness": "",
+        "enriched": False,
     }
 
 
@@ -65,22 +66,25 @@ def enrich_contacts(row: dict) -> dict:
         return {"error": "no website"}
     from pith import Extractor
     from pith.cli import contact_evidence
-    from pith.recipes import owner_email, rank_phones
+    from pith.recipes import owner_email, people, rank_phones
     if not site.startswith("http"):
         site = "https://" + site
-    ev = contact_evidence(site, workers=4)
+    ev = contact_evidence(site, workers=6)          # crawls team/about pages: schema + heuristic people
     facts = ev["facts"]
     best = owner_email(facts)
     emails = [f.value for f in facts if f.kind == "email"]
     phones = [f.value for f in rank_phones(facts)]
+    roster = people(facts)
+    dm, title, dm_email = _pick_decision_maker(roster)
     r = Extractor().extract([site]).results[0]
     socials = [s for s in r.socials if any(h in s for h in _SOCIAL_HOSTS)]
     linkedin = next((s for s in socials if "linkedin.com" in s), "")
-    dm, title = _decision_maker(r.structured)
     return {
         "email": (best.value if best else "") or (emails[0] if emails else ""),
-        "owner_email": best.value if best else "",
+        "owner_email": (dm_email or (best.value if best else "")),
         "decision_maker": dm, "title": title,
+        "team": " · ".join(f"{p['name']}" + (f" ({p['title'][:20]})" if p["title"] else "")
+                            for p in roster[:4]),
         "linkedin": linkedin,
         "socials": ", ".join(socials)[:160],
         "extra_phones": ", ".join(p for p in phones if p != row.get("phone"))[:120],
@@ -88,13 +92,19 @@ def enrich_contacts(row: dict) -> dict:
     }
 
 
-def _decision_maker(structured) -> tuple[str, str]:
-    """First schema.org Person carrying a jobTitle -> (name, title). The free decision-maker —
-    business sites publish their team/dentist/agent as Person entities with jobTitle."""
-    for s in structured:
-        if "Person" in str(s.get("@type", "")) and s.get("jobTitle"):
-            return s.get("name", ""), s.get("jobTitle", "")
-    return "", ""
+_OWNERISH = ("owner", "founder", "president", "principal", "ceo", "partner", "proprietor")
+
+
+def _pick_decision_maker(roster) -> tuple[str, str, str]:
+    """From the people roster, pick the most decision-maker-ish: prefer an owner/founder/principal
+    title, else the best-corroborated titled person. Returns (name, title, personal_email)."""
+    if not roster:
+        return "", "", ""
+    ranked = sorted(roster, key=lambda p: (
+        -any(o in (p["title"] or "").lower() for o in _OWNERISH),   # owner-ish first
+        -bool(p["title"]), -p["corroboration"]))
+    top = ranked[0]
+    return top["name"], top["title"], (top["emails"][0] if top.get("emails") else "")
 
 
 def enrich_tech(row: dict) -> dict:
