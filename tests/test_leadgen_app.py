@@ -1,13 +1,17 @@
 """Lead-miner workbench engine (examples/leadgen/app.py) — the UI-free functions. Offline tests
 cover the row shaping + no-website guards; live tests (mine/enrich) are marked and skipped by
 default. The Streamlit UI is a thin shell over these; boot is smoke-tested separately."""
-import sys
+import importlib.util
 from pathlib import Path
 
 import pytest
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "examples" / "leadgen"))
-import app  # noqa: E402
+# load under a unique name — the b2b example is also examples/*/app.py, so a bare `import app`
+# collides in sys.modules across test files.
+_spec = importlib.util.spec_from_file_location(
+    "leadgen_app", Path(__file__).resolve().parents[1] / "examples" / "leadgen" / "app.py")
+app = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(app)
 
 
 def test_flatten_shape():

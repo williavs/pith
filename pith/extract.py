@@ -104,14 +104,22 @@ _FEDIVERSE = frozenset({
 })
 
 
+# WHOIS privacy-proxy hosts: the "registrant email" is a per-domain hash, never a real contact.
+_PROXY_EMAIL = ("whoisproxy", "whoisguard", "privacyprotect", "contactprivacy", "domainsbyproxy",
+                "privacyguardian", "withheldforprivacy", "identity-protect", "data-protected",
+                "redacted", "proxy.dnstination")
+
+
 def _junk_email(e: str) -> bool:
-    """True if an email-shaped string is template junk, an asset filename, a placeholder, or a
-    fediverse handle — used everywhere emails are emitted so the same gate applies."""
+    """True if an email-shaped string is template junk, an asset filename, a placeholder, a
+    fediverse handle, or a WHOIS privacy-proxy hash — used everywhere emails are emitted."""
     el = e.lower()
-    if any(j in el for j in _ASSET_JUNK):
+    if any(j in el for j in _ASSET_JUNK) or any(p in el for p in _PROXY_EMAIL):
         return True
     local, _, domain = el.partition("@")
     if local in _PLACEHOLDER_LOCAL or domain in _PLACEHOLDER_DOMAIN or domain in _FEDIVERSE:
+        return True
+    if len(local) >= 40 and re.fullmatch(r"[0-9a-f]+", local):    # 64-char hex local = proxy/obfuscation hash
         return True
     return domain.rsplit(".", 1)[-1] in _FILE_EXT_TLD
 

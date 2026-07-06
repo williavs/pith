@@ -124,7 +124,15 @@ def is_probable_name(name: str) -> bool:
     toks = n.split()
     if not (2 <= len(toks) <= 4):
         return False
-    return not any(t.lower().strip(".") in {"and", "&", "of", "for", "the", "at"} for t in toks)
+    if any(t.lower().strip(".") in {"and", "&", "of", "for", "the", "at"} for t in toks):
+        return False
+    # name run into a title: "WangCEO", "LavingiaFounder" — a token ending in a CamelCase run-on
+    # whose trailing chunk is a role word. (Leaves real internal caps like DeShawn / McDonald alone.)
+    for t in toks:
+        m = re.search(r"[a-z]([A-Z][a-zA-Z]*)$", t)
+        if m and m.group(1).lower() in _ROLE_TOKENS:
+            return False
+    return True
 
 
 def extract_people(text: str, emails=(), source_url: str = "") -> list[dict]:

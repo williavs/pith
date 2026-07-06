@@ -146,6 +146,14 @@ def test_fediverse_handle_not_email():
     assert emails("real jane@acme.com") == ["jane@acme.com"]
 
 
+def test_whois_proxy_emails_dropped():
+    from pith.extract import _junk_email
+    assert _junk_email("abc@acme.com.whoisproxy.org")           # privacy-proxy host
+    assert _junk_email("x@foo.whoisguard.com")
+    assert _junk_email("a" * 40 + "0@vercel.com")               # long-hex obfuscation local
+    assert not _junk_email("jane@acme.com")
+
+
 def test_name_like_excludes_team_mailboxes():
     from pith.cli import _email_type_scoped
     assert _email_type_scoped("jane.diaz@acme.com", "acme.com") == "person"

@@ -54,3 +54,6 @@ def test_is_probable_name_gate():
     assert not is_probable_name("Gust and Adam Goettl Master Plumber")  # phrase (>4 tok + 'and')
     assert not is_probable_name("Solutions")                          # single token
     assert not is_probable_name("john@acme.com")                      # an email, not a name
+    assert not is_probable_name("Alexandr WangCEO")                   # name run into a role
+    assert not is_probable_name("Sahil LavingiaFounder")
+    assert is_probable_name("Aaron McDonald") and is_probable_name("DeShawn Williams")  # real internal caps
