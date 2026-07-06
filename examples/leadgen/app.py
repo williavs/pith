@@ -24,7 +24,8 @@ from pith.leads import find_businesses, PROVIDERS          # noqa: E402
 # ---------------------------------------------------------------------------
 
 LEAD_COLS = ["name", "confidence", "sources", "phone", "website", "address", "category",
-             "email", "extra_phones", "framework", "modernness", "enriched"]
+             "email", "owner_email", "decision_maker", "title", "linkedin", "socials",
+             "extra_phones", "framework", "modernness", "enriched"]
 
 
 def _flatten(biz: dict) -> dict:
@@ -37,7 +38,8 @@ def _flatten(biz: dict) -> dict:
         "website": biz.get("website", ""),
         "address": biz.get("address", ""),
         "category": biz.get("category", ""),
-        "email": "", "extra_phones": "", "framework": "", "modernness": "", "enriched": False,
+        "email": "", "owner_email": "", "decision_maker": "", "title": "", "linkedin": "",
+        "socials": "", "extra_phones": "", "framework": "", "modernness": "", "enriched": False,
     }
 
 
@@ -51,12 +53,17 @@ def mine_leads(category: str, location: str, sources="auto", limit: int = 100,
     return [_flatten(b) for b in res["businesses"]], res["coverage"]
 
 
+_SOCIAL_HOSTS = ("linkedin.com", "facebook.com", "instagram.com", "twitter.com", "x.com")
+
+
 def enrich_contacts(row: dict) -> dict:
-    """Crawl the row's website for contact evidence; fill email + extra phones. Pure: returns a
-    dict of column updates (or an 'error' key). No-op if the row has no website."""
+    """Crawl the row's website and surface EVERYTHING pith pulls for free — not just an email.
+    The site is the richest free source: role/owner email, extra phones, socials (incl. LinkedIn),
+    and the decision-maker (schema.org Person + jobTitle). Returns column updates. No-op w/o site."""
     site = row.get("website")
     if not site:
         return {"error": "no website"}
+    from pith import Extractor
     from pith.cli import contact_evidence
     from pith.recipes import owner_email, rank_phones
     if not site.startswith("http"):
@@ -64,12 +71,30 @@ def enrich_contacts(row: dict) -> dict:
     ev = contact_evidence(site, workers=4)
     facts = ev["facts"]
     best = owner_email(facts)
+    emails = [f.value for f in facts if f.kind == "email"]
     phones = [f.value for f in rank_phones(facts)]
+    r = Extractor().extract([site]).results[0]
+    socials = [s for s in r.socials if any(h in s for h in _SOCIAL_HOSTS)]
+    linkedin = next((s for s in socials if "linkedin.com" in s), "")
+    dm, title = _decision_maker(r.structured)
     return {
-        "email": best or "",
+        "email": (best.value if best else "") or (emails[0] if emails else ""),
+        "owner_email": best.value if best else "",
+        "decision_maker": dm, "title": title,
+        "linkedin": linkedin,
+        "socials": ", ".join(socials)[:160],
         "extra_phones": ", ".join(p for p in phones if p != row.get("phone"))[:120],
         "enriched": True,
     }
+
+
+def _decision_maker(structured) -> tuple[str, str]:
+    """First schema.org Person carrying a jobTitle -> (name, title). The free decision-maker —
+    business sites publish their team/dentist/agent as Person entities with jobTitle."""
+    for s in structured:
+        if "Person" in str(s.get("@type", "")) and s.get("jobTitle"):
+            return s.get("name", ""), s.get("jobTitle", "")
+    return "", ""
 
 
 def enrich_tech(row: dict) -> dict:
