@@ -61,6 +61,9 @@ def test_taxonomy_mapping_and_fallback():
     assert "dentist" in _taxon("Dentist").overture        # singular + case handled
     unknown = _taxon("artisanal cheese caves")
     assert unknown.osm == () and unknown.term == "artisanal cheese caves"   # free-text fallback
+    # human phrasing resolves to a mapped taxon (not free-text -> Overture returning everything)
+    assert "office=estate_agent" in _taxon("real estate agents").osm
+    assert "amenity=restaurant" in _taxon("restaurants").osm
 
 
 def test_registry_has_keyless_providers():

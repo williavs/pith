@@ -152,6 +152,10 @@ def _taxon(category: str) -> Taxon:
     for k in (key + "s", key.rstrip("s")):
         if k in _CATEGORIES:
             return _CATEGORIES[k]
+    norm = category.strip().lower()          # human phrasing -> a mapped taxon's search term
+    for t in _CATEGORIES.values():           # e.g. "real estate agents" -> the realtors taxon
+        if t.term and t.term.lower() == norm:
+            return t
     return Taxon(term=category)     # free-text fallback (yelp/google/name search still work)
 
 
@@ -387,6 +391,7 @@ class OvertureProvider:
         if proc.returncode != 0:
             raise RuntimeError(f"overturemaps failed: {proc.stderr[:200]}")
         cats = {c.lower() for c in spec.taxon.overture}
+        term = (spec.taxon.term or "").lower()
         out = []
         for line in proc.stdout.splitlines():
             if not line.strip():
@@ -398,11 +403,15 @@ class OvertureProvider:
             p = g.get("properties", {})
             cat = ((p.get("categories") or {}).get("primary") or "").lower()
             alt = {a.lower() for a in ((p.get("categories") or {}).get("alternate") or [])}
-            if cats and cat not in cats and not (cats & alt):
-                continue
             name = (p.get("names") or {}).get("primary") or ""
             if not name:
                 continue
+            if cats:                              # mapped category -> match Overture's taxonomy
+                if cat not in cats and not (cats & alt):
+                    continue
+            elif term:                            # unmapped -> text-match, never return everything
+                if term not in f"{cat} {name}".lower():
+                    continue
             coords = (g.get("geometry") or {}).get("coordinates") or [None, None]
             phones = p.get("phones") or []
             sites = p.get("websites") or []
