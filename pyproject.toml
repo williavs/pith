@@ -21,6 +21,13 @@ pdf = ["pymupdf>=1.24"]
 osint = [
     "phonenumbers>=9.0.33",
 ]
+# Bulk open business datasets for pith.leads: Overture Maps Places (via the overturemaps
+# release resolver) and Foursquare Open Places (Parquet on Hugging Face, queried with DuckDB).
+# The Overpass (OSM) provider needs none of this — it's live + stdlib-only.
+places = [
+    "overturemaps>=0.9.0",
+    "duckdb>=1.0",
+]
 
 [project.scripts]
 pith = "pith.cli:main"
