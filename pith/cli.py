@@ -79,13 +79,29 @@ def read_sitemap(url: str, match: str | None = None, limit: int | None = None) -
     return [(None, u) for u in uniq]
 
 
-# GTM-relevant sections: where decision-maker signal lives on a company site.
-_SECTIONS = ("about", "contact", "team", "leadership", "people", "our-team", "our-staff",
-             "company", "management", "founders", "staff", "careers", "jobs",
-             # profession-specific team pages the generic slugs miss (dental/legal/realty/medical)
-             "meet", "our-doctors", "doctors", "providers", "our-providers", "physicians",
-             "dentists", "attorneys", "our-attorneys", "lawyers", "agents", "our-agents",
-             "associates", "partners", "principals", "owners", "bios", "profiles", "our-people")
+# Team/people pages carry a hundred different names, and plenty of sites give them an opaque URL
+# ("/p/42") with the real label only in the nav TEXT. So we match on URL path AND anchor text, over
+# a broad slug set, and PRIORITIZE people-rich pages so they win the crawl budget over about/contact.
+_PEOPLE_SECTIONS = (
+    "our-team", "team", "meet", "our-staff", "staff", "our-people", "people", "leadership",
+    "management", "founders", "founder", "owners", "who-we-are", "whoweare", "our-crew", "crew",
+    "our-family", "family", "bios", "bio", "profiles", "roster", "faculty", "directory",
+    "our-doctors", "doctors", "our-providers", "providers", "physicians", "surgeons", "dentists",
+    "our-attorneys", "attorneys", "lawyers", "our-agents", "agents", "realtors", "brokers",
+    "associates", "partners", "principals", "our-stylists", "stylists", "trainers", "instructors",
+    "practitioners", "specialists", "our-experts", "experts", "advisors", "care-team", "our-story",
+)
+_SUPPORT_SECTIONS = ("about", "company", "contact", "careers", "jobs")
+_SECTIONS = _PEOPLE_SECTIONS + _SUPPORT_SECTIONS          # crawl_site default (back-compat name)
+
+# nav link TEXT that signals a people page even when the URL doesn't (opaque-slug rescue)
+_ANCHOR_TEAM = (
+    "meet the", "meet our", "meet dr", "meet us", "our team", "the team", "our people",
+    "our staff", "who we are", "leadership", "our doctors", "our providers", "our physicians",
+    "our dentists", "our attorneys", "our agents", "our family", "our crew", "our experts",
+    "our stylists", "our trainers", "our founders", "management team", "meet the team",
+    "the doctors", "the attorneys", "the agents", "about us", "our story", "our staff",
+)
 
 
 def score_relevance(query: str, url: str, snippet: str = "") -> int:
@@ -249,7 +265,7 @@ def contact_evidence(website: str, workers: int = 4) -> dict:
     domain = _registrable(website)
     ex = Extractor()
     try:
-        targets = crawl_site(website, limit=8)
+        targets = crawl_site(website, limit=12)   # people-rich pages are prioritized within this budget
     except Exception:
         targets = [(None, website)]
     urls = [u for _, u in targets]
@@ -511,30 +527,54 @@ def render_enrich(rows, fmt: str) -> str:
 
 
 def _section_links(seed: str, html: str, sections, limit: int) -> list[tuple[str | None, str]]:
-    """Pure: from a homepage's HTML, keep same-domain links whose path hits a section.
-    Seed first, then matches in document order, deduped, capped. (Tested offline.)"""
+    """Pure: from a homepage's HTML, keep same-domain links that hit a section — by URL path OR by
+    nav anchor TEXT (so an opaquely-named team page is still found). Seed first, then people-rich
+    pages before generic about/contact (they win the crawl budget when the cap truncates), stable
+    within a tier. Deduped, capped. (Tested offline.)"""
     from urllib.parse import urljoin, urlsplit
     host = urlsplit(seed).netloc
-    out, seen = [(None, seed)], {seed}
-    for href in re.findall(r'href=["\']([^"\']+)', html):
-        u = urljoin(seed, href).split("#")[0]
+    people = (set(sections) & set(_PEOPLE_SECTIONS)) or set(sections)   # honor custom section tuples
+    out, seen, cand = [(None, seed)], {seed}, []
+    for m in re.finditer(r'<a\b[^>]*\bhref=["\']([^"\']+)["\'][^>]*>(.*?)</a>', html, re.I | re.S):
+        u = urljoin(seed, m.group(1)).split("#")[0]
         sp = urlsplit(u)
-        if sp.netloc == host and any(s in sp.path.lower() for s in sections) and u not in seen:
-            seen.add(u)
-            out.append((None, u))
-            if len(out) >= limit:
-                break
+        if sp.netloc != host or u in seen:
+            continue
+        path = sp.path.lower()
+        text = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", m.group(2))).strip().lower()
+        path_hit = next((s for s in sections if s in path), None)
+        text_hit = any(a in text for a in _ANCHOR_TEAM)
+        if not path_hit and not text_hit:
+            continue
+        seen.add(u)
+        pri = 2 if text_hit or (path_hit in people) else 1
+        cand.append((pri, len(cand), u))                    # (tier, doc-order) -> stable priority sort
+    for _, _, u in sorted(cand, key=lambda x: (-x[0], x[1])):
+        out.append((None, u))
+        if len(out) >= limit:
+            break
     return out
 
 
 def crawl_site(seed: str, sections=_SECTIONS, limit: int = 25) -> list[tuple[str | None, str]]:
     """Strategic crawl: fetch a homepage, follow one level of same-domain links into the
-    high-value sections (about/contact/team/...). One level — nav links cover the GTM
-    sections, and walled pages cost ~4-5s each so coverage is the wrong goal anyway.
-    ponytail: one level; recurse if a real site buries its team page deeper than nav."""
-    from .core import _fetch_static
+    high-value sections (about/contact/team/...) by URL path AND nav anchor text. One level —
+    nav links cover the GTM sections. If the homepage is a JS shell (static HTML renders empty),
+    the nav — and the team-page link — isn't in the static markup, so escalate to the browser to
+    read the rendered nav. ponytail: one level; recurse if a site buries its team below nav."""
+    from .core import _extract_md, _fetch_js, _fetch_static, _looks_thin, _JS_SHELL_MIN_HTML
     html = _fetch_static(seed)   # SSRF-guarded + gzip-aware (raw urllib.urlopen was neither)
-    return _section_links(seed, html, sections, limit)
+    links = _section_links(seed, html, sections, limit)
+    # thin markdown + substantial HTML = JS shell; the static nav is empty so we found ~nothing.
+    if len(links) <= 2 and _looks_thin(_extract_md(html)) and len(html) >= _JS_SHELL_MIN_HTML:
+        try:
+            rendered = _fetch_js(seed)
+            js_links = _section_links(seed, rendered, sections, limit)
+            if len(js_links) > len(links):
+                links = js_links
+        except Exception:
+            pass
+    return links
 
 
 def read_targets(path: str) -> list[tuple[str | None, str]]:

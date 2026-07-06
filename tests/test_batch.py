@@ -187,6 +187,24 @@ def test_section_links_filters_dedups_bounds():
     assert all("twitter.com" not in u for u in urls)         # off-domain dropped
 
 
+def test_section_links_matches_anchor_text_and_prioritizes():
+    from pith.cli import _SECTIONS
+    seed = "https://acme.com/"
+    html = '''
+      <a href="/contact">Contact</a>
+      <a href="/p/42">Meet the Crew</a>              <!-- opaque URL, team anchor text -->
+      <a href="/x9">Our Doctors</a>                  <!-- opaque URL, roster anchor text -->
+      <a href="/blog/post">Latest news</a>           <!-- no signal -->
+      <a href="/team">Team</a>
+    '''
+    got = [u for _, u in _section_links(seed, html, _SECTIONS, limit=25)]
+    assert "https://acme.com/p/42" in got and "https://acme.com/x9" in got  # found by anchor text
+    assert "https://acme.com/blog/post" not in got
+    # people-rich pages rank before generic /contact within the budget
+    assert got.index("https://acme.com/team") < got.index("https://acme.com/contact")
+    assert got.index("https://acme.com/p/42") < got.index("https://acme.com/contact")
+
+
 def test_section_links_respects_limit():
     seed = "https://x.com/"
     html = "".join(f'<a href="/about/{i}">a</a>' for i in range(50))
