@@ -72,6 +72,35 @@ pith --from companies.csv --format json   # machine-readable {results, errors}
 pith --from companies.csv --workers 8     # parallel fetches
 ```
 
+## Business intelligence — leads, people, signals
+
+Beyond single-URL extraction, pith has a keyless business-data layer built on the same
+evidence model (values carry their sources + corroboration, never a hidden score).
+
+```python
+from pith.leads import find_businesses
+res = find_businesses("dentists", "Phoenix, AZ", limit=100)   # OSM/Overpass + Overture, keyless
+for b in res["businesses"]:
+    print(b["confidence"], b["providers"], b["name"], b["phone"], b["website"])
+```
+
+- **`pith.leads.find_businesses(category, location, ...)`** — multi-source local-business
+  discovery. Providers: **Overpass** (OSM, live) + **Overture** (bulk, needs `pith[places]`)
+  keyless out of the box; **Yelp / Google / Foursquare** light up when you set a free key
+  (`PITH_YELP_KEY` etc.). Results are **waterfall-merged** across sources: each field becomes a
+  `Fact` whose corroboration = how many providers agree, blended into a confidence score. This is
+  what `directory_search` now runs on (the old YellowPages/SuperPages scraper is gone).
+- **`pith.people.extract_people(text, emails, url)`** — deterministic decision-maker extraction
+  (name + title + email) from team/about-page HTML, not just schema.org. Folded into
+  `contact_evidence`; surfaced via `recipes.people`.
+- **`pith.jobs.jobs_search` / `pith.news.news_search` / `pith.financials.company_intel`** —
+  hiring, buyer-intent news, and SEC/funding signals per company (all keyless).
+
+Two runnable Streamlit workbenches show the whole thing: **`examples/leadgen`** (local SMB lists →
+enrich → CSV) and **`examples/b2b`** (paste account domains → hiring/news/tech/funding dossier with
+a payroll/AI lens). Measured coverage + the free-vs-paid gap analysis: `benchmarks/LEADS_COVERAGE.md`,
+`benchmarks/REQUIREMENTS_GAPS.md`.
+
 ## Supported sources
 
 Tested live against real public URLs (see `benchmarks/`). pith returns **public data only** —
@@ -143,6 +172,8 @@ tricks floating around are dead as of mid-2026.)
 | `[js]` | `scrapling[fetchers]` → patchright/playwright + a stealth browser; `curl_cffi` for the impersonation tier | `scrapling install` downloads a browser (~hundreds of MB). Heavy, but it's what beats the walls. |
 | `[docs]` | `markitdown[all]` | PDF/Word/PowerPoint/Excel/epub/images → markdown |
 | `[pdf]` | `pymupdf` | lighter than `[docs]` if PDFs are all you need |
+| `[places]` | `overturemaps` + `duckdb` | bulk business datasets for `pith.leads` (Overture + Foursquare-Open). The Overpass/OSM provider needs none of this — it's live + stdlib-only. |
+| `[osint]` | `phonenumbers` | offline phone intelligence (`phone_intel`) |
 
 **Deploying `[js]` (Docker / serverless):** the stealth browser is downloaded by `scrapling
 install`, *not* bundled in the wheel — so `pip install` alone won't render JS pages in a fresh

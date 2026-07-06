@@ -37,6 +37,22 @@ via `pith.recipes` (`owner_email`, `rank_phones`). The examples show that split 
 |---|---|---|
 | **tooling/datatables/gen.py** | Runs every extractor across a normal + edge-case matrix and renders sortable browser tables — so you can SEE the real output, including false-positive handling and failure rows. | `python examples/tooling/datatables/gen.py` → open `tooling/datatables/index.html` |
 
+## apps/ — full workbenches (Streamlit)
+
+Two end-to-end lead tools over `pith.leads` (keyless multi-source business discovery) + the
+extraction core. Both keep their mining/enrichment logic in UI-free functions (tested), Streamlit
+is just the shell.
+
+| App | Who it's for | Run |
+|---|---|---|
+| **leadgen/app.py** | **Local businesses** (SMB). Category + location → mine real businesses (OSM/Overpass + Overture) → grid → enrich rows with contacts/**decision-makers**/tech → CSV. Win98 aesthetic. | `uv run --with streamlit --with overturemaps streamlit run examples/leadgen/app.py` |
+| **b2b/app.py** | **B2B accounts.** Paste target domains → dossier of the signals that qualify an account: **hiring** velocity, **news** signals, **tech** stack, **funding**, firmographics. A `payroll`/`ai_services` lens surfaces the relevant ones. | `uv run --with streamlit streamlit run examples/b2b/app.py` |
+
+Decision-makers: the leadgen app surfaces them (website people extraction is reliable on small
+sites); the b2b app deliberately omits them (garbage on large companies — LinkedIn/paid territory).
+See `benchmarks/REQUIREMENTS_GAPS.md` and `benchmarks/LEADS_COVERAGE.md` for the measured coverage
+that drove those calls.
+
 ## personas/ — end-to-end, in one operator's voice
 
 Each subfolder is a real-world persona (SDR, agency-founder, investigator, journalist,
@@ -61,3 +77,10 @@ Everything else — `contact_evidence` (+ `pith.recipes`), `website_intel`, `enr
 `directory_search`, `enumerate_profiles`, `gravatar_profile`, `phone_intel`, `verify_email` —
 is a one-call function returning plain data. `news_search(company)` does keyless buyer-intent news search (no Tavily). Or run `python -m pith.serve` and hit the same
 capabilities over HTTP from any language.
+
+**Business discovery:** `pith.leads.find_businesses(category, location)` pulls real local
+businesses from every configured source (OSM/Overpass + Overture keyless; Yelp/Google/Foursquare
+if you add a free key) and cross-source **waterfalls** them — each field carries which providers
+agree (corroboration) and a confidence score. It's what `directory_search` runs on now (the old
+YellowPages/SuperPages scraper is gone). **People:** `pith.people.extract_people` pulls
+decision-makers (name + title + email) from team-page HTML, not just schema.org.
