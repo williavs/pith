@@ -407,12 +407,165 @@ class OvertureProvider:
         return out
 
 
-# providers implemented against the same contract; keyless ones are live-tested. Keyed providers
-# read their key from config[key_env] or os.environ[key_env] and no-op (available->False) without it.
-PROVIDERS: dict[str, object] = {
-    OverpassProvider.name: OverpassProvider(),
-    OvertureProvider.name: OvertureProvider(),
-}
+class FsqOpenProvider:
+    name = "fsq_open"
+    needs_key = False
+    key_env = ""
+    update_frequency = "monthly release (Foundry/Foursquare open data on Hugging Face)"
+    reliability = "~100M global POIs; strong urban coverage; category-rich"
+    license = "Apache-2.0 (commercial-clean)"
+    weight = 0.8
+
+    def available(self, config) -> bool:
+        # Bulk dataset: fast only against a LOCAL parquet dir (100 remote HF shards per query has
+        # no spatial index -> too slow to scan live). Point PITH_FSQ_PARQUET / config['fsq_dir']
+        # at a downloaded release dir (…/places/parquet). Absent -> provider cleanly skipped.
+        path = config.get("fsq_dir") or os.environ.get("PITH_FSQ_PARQUET", "")
+        if not path or not os.path.isdir(path):
+            return False
+        try:
+            import duckdb  # noqa: F401
+            return True
+        except ImportError:
+            return False
+
+    def search(self, spec: SearchSpec) -> list[RawBiz]:
+        import duckdb
+        path = spec.config.get("fsq_dir") or os.environ["PITH_FSQ_PARQUET"]
+        s, w, n, e = spec.bbox
+        terms = spec.taxon.fsq or (spec.taxon.term,)
+        like = " OR ".join(f"lower(fsq_category_labels::VARCHAR) LIKE '%{t.lower()}%'" for t in terms)
+        con = duckdb.connect()
+        q = f"""SELECT name, tel, website, email, latitude, longitude, fsq_place_id,
+                       address, locality, region, postcode
+                FROM read_parquet('{os.path.join(path, '*.parquet')}')
+                WHERE latitude BETWEEN {s} AND {n} AND longitude BETWEEN {w} AND {e}
+                  AND ({like}) LIMIT {spec.limit * 3}"""
+        rows = con.execute(q).fetchall()
+        out = []
+        for name, tel, site, email, lat, lon, fid, addr, loc, reg, pc in rows:
+            if not name:
+                continue
+            full = " ".join(x for x in [addr or "", loc or "", reg or "", pc or ""] if x).strip()
+            out.append(RawBiz(name=name, provider=self.name, lat=lat, lon=lon, phone=tel or "",
+                              website=site or "", email=email or "", address=full,
+                              category=spec.category, url=f"https://foursquare.com/v/{fid}"))
+        return out
+
+
+class _KeyedProvider:
+    """Base for API providers that need a (free) key. `search` = fetch + parse; `_parse` is split
+    out so it's unit-testable offline. Available only when the key is configured."""
+    needs_key = True
+
+    def available(self, config) -> bool:
+        return bool(_key_for(self, config))
+
+    def _fetch(self, spec: SearchSpec) -> dict:
+        raise NotImplementedError
+
+    def _parse(self, payload: dict, spec: SearchSpec) -> list[RawBiz]:
+        raise NotImplementedError
+
+    def search(self, spec: SearchSpec) -> list[RawBiz]:
+        return self._parse(self._fetch(spec), spec)
+
+
+class YelpProvider(_KeyedProvider):
+    name = "yelp"
+    key_env = "PITH_YELP_KEY"
+    update_frequency = "live API (Yelp-maintained; near real-time)"
+    reliability = "strong US SMB coverage, phone + address + ratings; no website/email in payload"
+    license = "Yelp Fusion ToS — display use; storing/reselling restricted"
+    weight = 0.8
+
+    def _fetch(self, spec):
+        q = urllib.parse.urlencode({"term": spec.taxon.term or spec.category,
+                                    "latitude": spec.geo["lat"], "longitude": spec.geo["lon"],
+                                    "limit": min(50, spec.limit)})
+        raw = _get(f"https://api.yelp.com/v3/businesses/search?{q}",
+                   headers={"Authorization": f"Bearer {_key_for(self, spec.config)}"}, timeout=30)
+        return json.loads(raw)
+
+    def _parse(self, payload, spec):
+        out = []
+        for b in payload.get("businesses", []):
+            coord = b.get("coordinates") or {}
+            out.append(RawBiz(name=b.get("name", ""), provider=self.name,
+                              lat=coord.get("latitude"), lon=coord.get("longitude"),
+                              phone=b.get("phone") or b.get("display_phone", ""),
+                              address=", ".join((b.get("location") or {}).get("display_address", [])),
+                              category=spec.category, url=b.get("url", "")))
+        return [r for r in out if r.name]
+
+
+class GoogleProvider(_KeyedProvider):
+    name = "google"
+    key_env = "PITH_GOOGLE_KEY"
+    update_frequency = "live API (Google Places, New; best freshness)"
+    reliability = "highest completeness + freshness; phone + website + address"
+    license = "Google Places ToS — caching limited, storing/reselling restricted"
+    weight = 0.9
+
+    def _fetch(self, spec):
+        body = json.dumps({"textQuery": f"{spec.taxon.term or spec.category} in {spec.location}",
+                           "maxResultCount": min(20, spec.limit)}).encode()
+        raw = _get("https://places.googleapis.com/v1/places:searchText", data=body,
+                   headers={"Content-Type": "application/json",
+                            "X-Goog-Api-Key": _key_for(self, spec.config),
+                            "X-Goog-FieldMask": "places.displayName,places.nationalPhoneNumber,"
+                                                "places.websiteUri,places.formattedAddress,places.location"},
+                   timeout=30)
+        return json.loads(raw)
+
+    def _parse(self, payload, spec):
+        out = []
+        for p in payload.get("places", []):
+            loc = p.get("location") or {}
+            out.append(RawBiz(name=(p.get("displayName") or {}).get("text", ""), provider=self.name,
+                              lat=loc.get("latitude"), lon=loc.get("longitude"),
+                              phone=p.get("nationalPhoneNumber", ""), website=p.get("websiteUri", ""),
+                              address=p.get("formattedAddress", ""), category=spec.category))
+        return [r for r in out if r.name]
+
+
+class FsqApiProvider(_KeyedProvider):
+    name = "fsq_api"
+    key_env = "PITH_FSQ_KEY"
+    update_frequency = "live API (Foursquare Places; near real-time)"
+    reliability = "global POIs, category-rich; phone + website + address"
+    license = "Foursquare Places API ToS — attribution; storage limited"
+    weight = 0.8
+
+    def _fetch(self, spec):
+        q = urllib.parse.urlencode({"query": spec.taxon.term or spec.category,
+                                    "ll": f"{spec.geo['lat']},{spec.geo['lon']}",
+                                    "limit": min(50, spec.limit),
+                                    "fields": "name,tel,website,email,location,latitude,longitude,fsq_place_id"})
+        raw = _get(f"https://places-api.foursquare.com/places/search?{q}",
+                   headers={"Authorization": f"Bearer {_key_for(self, spec.config)}",
+                            "X-Places-Api-Version": "2025-06-17"}, timeout=30)
+        return json.loads(raw)
+
+    def _parse(self, payload, spec):
+        out = []
+        for p in payload.get("results", []):
+            loc = p.get("location") or {}
+            out.append(RawBiz(name=p.get("name", ""), provider=self.name,
+                              lat=p.get("latitude"), lon=p.get("longitude"),
+                              phone=p.get("tel", ""), website=p.get("website", ""),
+                              email=p.get("email", ""), address=loc.get("formatted_address", ""),
+                              category=spec.category, url=f"https://foursquare.com/v/{p.get('fsq_place_id','')}"))
+        return [r for r in out if r.name]
+
+
+# All providers on one contract. Keyless (overpass/overture/fsq_open) + keyed (yelp/google/fsq_api).
+# Keyed providers read their key from config[key_env] or os.environ[key_env]; without it they
+# report available()->False and find_businesses records them in coverage.skipped — never an error.
+PROVIDERS: dict[str, object] = {p.name: p for p in (
+    OverpassProvider(), OvertureProvider(), FsqOpenProvider(),
+    YelpProvider(), GoogleProvider(), FsqApiProvider(),
+)}
 
 _WEIGHTS = {name: getattr(p, "weight", 0.5) for name, p in PROVIDERS.items()}
 

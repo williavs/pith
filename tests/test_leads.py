@@ -69,6 +69,57 @@ def test_registry_has_keyless_providers():
     assert leads.PROVIDERS["overpass"].needs_key is False
 
 
+def _spec(cat="dentists", loc="Phoenix, AZ"):
+    from pith.leads import SearchSpec, _taxon
+    return SearchSpec(category=cat, taxon=_taxon(cat), location=loc,
+                      geo={"lat": 33.4, "lon": -112.0}, bbox=(33.3, -112.2, 33.6, -111.9),
+                      limit=20, config={})
+
+
+def test_all_six_providers_registered():
+    assert set(leads.PROVIDERS) == {"overpass", "overture", "fsq_open", "yelp", "google", "fsq_api"}
+    keyed = [p for p in leads.PROVIDERS.values() if p.needs_key]
+    assert {p.name for p in keyed} == {"yelp", "google", "fsq_api"}
+    for p in keyed:                              # no key configured -> cleanly unavailable, not an error
+        assert p.available({}) is False
+
+
+def test_yelp_parse():
+    payload = {"businesses": [{"name": "Acme Dental", "phone": "+16025551000",
+                               "coordinates": {"latitude": 33.4, "longitude": -112.0},
+                               "location": {"display_address": ["1 Main St", "Phoenix, AZ 85001"]},
+                               "url": "https://yelp.com/biz/acme"}]}
+    rows = leads.PROVIDERS["yelp"]._parse(payload, _spec())
+    assert len(rows) == 1 and rows[0].name == "Acme Dental" and rows[0].phone == "+16025551000"
+    assert rows[0].address == "1 Main St, Phoenix, AZ 85001" and rows[0].provider == "yelp"
+
+
+def test_google_parse():
+    payload = {"places": [{"displayName": {"text": "Bright Smiles"}, "nationalPhoneNumber": "(602) 555-2000",
+                           "websiteUri": "https://brightsmiles.com", "formattedAddress": "2 Oak Ave, Phoenix",
+                           "location": {"latitude": 33.41, "longitude": -112.01}}]}
+    rows = leads.PROVIDERS["google"]._parse(payload, _spec())
+    assert rows[0].name == "Bright Smiles" and rows[0].website == "https://brightsmiles.com"
+    assert rows[0].phone == "(602) 555-2000"
+
+
+def test_fsq_api_parse():
+    payload = {"results": [{"name": "Downtown Dental", "tel": "602-555-3000", "website": "http://dtdental.com",
+                            "email": "hi@dtdental.com", "latitude": 33.42, "longitude": -112.02,
+                            "location": {"formatted_address": "3 Elm St, Phoenix, AZ"}, "fsq_place_id": "abc"}]}
+    rows = leads.PROVIDERS["fsq_api"]._parse(payload, _spec())
+    assert rows[0].name == "Downtown Dental" and rows[0].email == "hi@dtdental.com"
+    assert "foursquare.com/v/abc" in rows[0].url
+
+
+def test_keyed_provider_reads_key_from_config():
+    from pith.leads import _key_for
+    y = leads.PROVIDERS["yelp"]
+    assert y.available({}) is False
+    assert y.available({"PITH_YELP_KEY": "sk-test"}) is True     # config key enables it
+    assert _key_for(y, {"PITH_YELP_KEY": "sk-test"}) == "sk-test"
+
+
 def test_register_custom_provider():
     class Fake:
         name = "fake"; needs_key = False; key_env = ""; weight = 0.6
