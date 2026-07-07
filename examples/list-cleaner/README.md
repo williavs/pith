@@ -63,6 +63,39 @@ is_duplicate_email, quality`.
   the owner's business inbox.
 - **`dead`** — bad syntax, disposable, or the domain won't accept mail. Don't send.
 
+## Stage 2 — rank the accounts (`enrich.py`)
+
+Cleaning gets you a deliverable list. `enrich.py` turns it into a **ranked account list**: dedupe
+contacts to unique companies, enrich each with pith's signal stack (tech stack, open roles, news
+signals, funding), and score for sell-fit — so you work the funded, hiring, growing accounts first.
+
+```sh
+uv run --with pandas python examples/list-cleaner/enrich.py ~/hfl-contacts/verified_40k.trimmed.csv \
+    -o ~/hfl-contacts/accounts_40k.csv --domain-col email_domain --name-col Company --limit 300
+```
+
+- **`--limit N`** enriches the top N companies by contact count. The signal calls (news/jobs) are
+  network-bound and slow (~15s/company), so you enrich your *target set*, not all 100k — 300
+  companies ≈ 13 min.
+- **Checkpointed**: it appends + flushes per company and skips any already in the output, so it's
+  safe to Ctrl-C and resume. No lost work, no re-hitting a done company.
+- **`score`** is transparent (hiring × 2 + funding + product/AI/leadership news + modern tech) —
+  filter/sort on it, it's not a black box.
+
+### Why not a "faster" language for the volume
+
+450k rows is small — pandas handles it in seconds. The slow part is the **network** (walled,
+rate-limited enrichment sources), and a faster language does nothing for network-bound work. The
+engine is pith, which is Python. The real levers — dedupe-to-companies, checkpoint/resume, bounded
+concurrency, enrich-a-shortlist — are all here, in Python.
+
+### Next: LinkedIn freshness (the staleness fix)
+
+A year-old list's biggest risk is people who moved. The rows carry `linkedin_url`; fetching the
+**public** LinkedIn page (pith browser tier) gives current company + title — is this person still
+there? That's the freshness check. It's walled + slow, so you run it on the **shortlist** you
+export from stage 2, not the whole list. (Not built here yet — it's the natural next step.)
+
 ## Honest boundaries
 
 - **No SMTP verification.** It's deliberately omitted — SMTP probing is unreliable

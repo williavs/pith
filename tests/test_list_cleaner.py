@@ -3,10 +3,32 @@ pure; the MX/resolve lookups are monkeypatched)."""
 import importlib.util
 from pathlib import Path
 
-_spec = importlib.util.spec_from_file_location(
-    "list_clean", Path(__file__).resolve().parents[1] / "examples" / "list-cleaner" / "clean.py")
-clean = importlib.util.module_from_spec(_spec)
-_spec.loader.exec_module(clean)
+def _load(name, fname):
+    s = importlib.util.spec_from_file_location(
+        name, Path(__file__).resolve().parents[1] / "examples" / "list-cleaner" / fname)
+    m = importlib.util.module_from_spec(s)
+    s.loader.exec_module(m)
+    return m
+
+
+clean = _load("list_clean", "clean.py")
+enrich = _load("list_enrich", "enrich.py")
+
+
+def test_enrich_score_rewards_signals():
+    hot = {"open_roles": 12, "signals": "funding:3 ai:2", "modernness": "A", "funding": "raised 5000000"}
+    cold = {"open_roles": 0, "signals": "", "modernness": "F", "funding": ""}
+    assert enrich._score(hot) > enrich._score(cold)
+    assert enrich._score({"open_roles": 0, "signals": "funding:1", "modernness": ""}) >= 15  # budget signal
+
+
+def test_enrich_dedupes_to_companies_busiest_first():
+    import pandas as pd
+    df = pd.DataFrame({"email_domain": ["acme.com", "acme.com", "acme.com", "x.io", ""],
+                       "organization_name": ["Acme", "Acme", "Acme", "X Inc", "?"]})
+    cos = enrich._domains(df, "email_domain", "organization_name")
+    assert cos[0] == ("acme.com", "Acme", 3)          # busiest company first
+    assert ("x.io", "X Inc", 1) in cos and len(cos) == 2  # blank domain dropped
 
 
 def _row(**kw):
