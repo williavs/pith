@@ -10,6 +10,7 @@ import html as _htmlmod
 import json
 import re
 import unicodedata
+import urllib.parse
 
 # normalize invisibles/unicode BEFORE any phone/email regex — these silently break \d runs.
 _DEL = dict.fromkeys(map(ord, "​‌‍‎‏⁠﻿­᠎"), None)  # ZW + soft-hyphen + word-joiner + LRM/RLM
@@ -123,18 +124,6 @@ def _junk_email(e: str) -> bool:
         return True
     return domain.rsplit(".", 1)[-1] in _FILE_EXT_TLD
 
-# social PROFILE urls only — not share/intent/generic-nav links, not other people's buttons.
-# Subdomain restricted to www/m: a profile is on the apex, so api./docs./collector.github.com
-# (site chrome) no longer masquerade as profiles.
-_SOCIAL = re.compile(
-    r"https?://(?:(?:www|m)\.)?"
-    r"(?:linkedin\.com/(?:in|company)/[A-Za-z0-9%_-]+"
-    r"|(?:twitter|x)\.com/[A-Za-z0-9_]{2,15}"
-    r"|github\.com/[A-Za-z0-9-]+"
-    r"|facebook\.com/[A-Za-z0-9.-]+"
-    r"|instagram\.com/[A-Za-z0-9._]+)",
-    re.I,
-)
 # handles/paths that are UI, not a person: share buttons, intents, nav, generic pages,
 # tracking pixels (facebook.com/tr), content permalinks (instagram.com/p/, /reel/, /tv/),
 # product/marketing pages (github.com/pricing, /features).
@@ -291,8 +280,65 @@ def _is_profile(url: str) -> bool:
     return handle not in _SOCIAL_HANDLES
 
 
+# Core apex-style platforms (profile at host/{user}) — present even if the OSINT sitelist can't load.
+_CORE_APEX = frozenset({
+    "linkedin.com", "twitter.com", "x.com", "github.com", "gitlab.com", "facebook.com",
+    "instagram.com", "youtube.com", "tiktok.com", "threads.net", "bsky.app", "medium.com",
+    "reddit.com", "pinterest.com", "behance.net", "dribbble.com", "twitch.tv", "vimeo.com",
+    "soundcloud.com", "patreon.com", "crunchbase.com", "mastodon.social",
+})
+_HOSTS: tuple | None = None          # (apex: frozenset, sub: frozenset)
+_URL_RE = re.compile(r"https?://[^\s\)\]\}\"'<>]+", re.I)
+
+
+def _profile_hosts() -> tuple:
+    """(apex, sub) host sets from the OSINT sitelist (~480 sites) + core platforms. A site's URL
+    pattern tells us which: `host/{}` -> apex (reject subdomains like docs.github.com); `{}.host`
+    -> sub (the subdomain IS the profile, jane.substack.com). Loaded once."""
+    global _HOSTS
+    if _HOSTS is None:
+        apex, sub = set(_CORE_APEX), {"substack.com", "tumblr.com", "wordpress.com", "medium.com"}
+        try:
+            from .profiles import load_sites
+            for site in load_sites().values():
+                pat = site.get("url", "") or site.get("urlMain", "")
+                netloc = urllib.parse.urlsplit(pat).netloc.lower()
+                if "{}" in netloc:                       # {user}.host  -> subdomain profile
+                    sub.add(netloc.split("}.")[-1].lstrip("."))
+                else:
+                    h = netloc[4:] if netloc.startswith("www.") else netloc
+                    if h:
+                        apex.add(h)
+        except Exception:
+            pass
+        _HOSTS = (frozenset(apex), frozenset(sub))
+    return _HOSTS
+
+
+def _host_known(host: str, apex: frozenset, sub: frozenset) -> bool:
+    host = host.lower()
+    if host.startswith(("www.", "m.", "mobile.")):
+        host = host.split(".", 1)[1]
+    if host in apex:                                     # exact apex host (github.com), not a subdomain
+        return True
+    return any(host == b or host.endswith("." + b) for b in sub)   # subdomain profile
+
+
 def socials(text: str) -> list[str]:
-    return sorted({m.group(0) for m in _SOCIAL.finditer(text or "") if _is_profile(m.group(0))})
+    """Every link to a known profile/social platform, minus share/nav/login junk. Raw by design:
+    matches the full OSINT sitelist so TikTok/YouTube/Behance/etc. are recognized, not just the old
+    five — the caller filters to the platforms it wants. Apex platforms reject subdomains (docs.
+    github.com isn't a profile); subdomain platforms keep them (jane.substack.com). ponytail:
+    host-match still keeps some content links on known platforms (a Medium article) — caller drops
+    those, pith hides nothing."""
+    apex, sub = _profile_hosts()
+    out = set()
+    for m in _URL_RE.finditer(text or ""):
+        u = m.group(0).rstrip(".,);]!’'\"")
+        host = urllib.parse.urlsplit(u).netloc
+        if host and _host_known(host, apex, sub) and _is_profile(u):
+            out.add(u)
+    return sorted(out)
 
 
 def _walk_entities(data):
@@ -397,14 +443,22 @@ def addresses(html: str) -> list[str]:
 
 
 def meta(html: str) -> dict:
-    """OpenGraph + author/date meta tags."""
+    """EVERY og:/twitter:/meta property the page publishes — raw, so the caller filters, not pith.
+    The old allowlist dropped free contact/price data (`business:contact_data:*`, `og:price:amount`,
+    `og:image`, `twitter:*`). Friendly aliases (title/description/site/type/author/published) are
+    kept for back-compat, set from the raw og:* keys."""
     m = {}
-    for prop, key in _META:
-        mt = re.search(
-            rf'<meta[^>]+(?:property|name)=["\']{re.escape(prop)}["\'][^>]+content=["\']([^"\']+)',
-            html or "", re.I)
-        if mt and key not in m:
-            m[key] = mt.group(1).strip()
+    for tag in re.finditer(r"<meta\b[^>]*>", html or "", re.I):
+        t = tag.group(0)
+        k = re.search(r'(?:property|name)=["\']([^"\']+)', t, re.I)
+        v = re.search(r'content=["\']([^"\']*)', t, re.I)
+        if k and v:
+            key, val = k.group(1).strip(), v.group(1).strip()
+            if key and val and key not in m:
+                m[key] = val
+    for prop, key in _META:                 # back-compat aliases over the raw keys
+        if prop in m and key not in m:
+            m[key] = m[prop]
     return m
 
 
