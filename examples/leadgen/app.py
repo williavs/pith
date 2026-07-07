@@ -269,6 +269,10 @@ def _run_ui():
         only_site = st.checkbox("Has website")
         only_phone = st.checkbox("Has phone")
         min_conf = st.slider("Min confidence", 0.0, 1.0, 0.0, 0.05)
+        parallel = st.slider("Parallel enrich", 2, 24, 8,
+                             help="Leads crawled at once. Throughput plateaus ~8-12: enrichment is "
+                                  "CPU-bound (GIL) and dominated by the slowest browser-tier site, "
+                                  "not the thread count. Higher mostly adds RAM pressure.")
 
     st.markdown('<div class="win-body">', unsafe_allow_html=True)
     c1, c2, c3 = st.columns([3, 3, 1.4])
@@ -326,7 +330,7 @@ def _run_ui():
 
             def _batch():                     # enrich leads concurrently (was one-at-a-time)
                 from concurrent.futures import ThreadPoolExecutor
-                with ThreadPoolExecutor(max_workers=5) as pool:
+                with ThreadPoolExecutor(max_workers=parallel) as pool:
                     list(pool.map(_one, sel))
 
             _run_streaming(f"{'✉ contacts' if do_contacts else '🖧 tech'} · enriching {len(sel)} leads (5 at a time)…", _batch)
