@@ -255,12 +255,16 @@ def _email_type_scoped(email: str, domain: str) -> str:
     return "external"
 
 
-def contact_evidence(website: str, workers: int = 4) -> dict:
+def contact_evidence(website: str, workers: int = 4, timeout: int = 20) -> dict:
     """EVIDENCE (not answers) for a business's public contact footprint. Crawls key pages,
     unions every extracted Fact across them (corroboration = distinct source pages), types
     emails by the business domain, folds in the WHOIS registrant as another source, and reports
     coverage (what was crawled / what failed). Returns Fact objects + Coverage — NO 'primary'
-    pick, no scalar. Apply pith.recipes (owner_email, rank_phones) with your intent on top."""
+    pick, no scalar. Apply pith.recipes (owner_email, rank_phones) with your intent on top.
+
+    `timeout` (s) caps EACH page fetch across every tier — including the browser (which otherwise
+    defaults to 60s), so one slow Cloudflare/JS site can't dominate a batch. Fetch stays adaptive:
+    cheap tier first, browser only when a page is a real JS shell — this just bounds the worst case."""
     from .evidence import Source, Coverage, aggregate
     domain = _registrable(website)
     ex = Extractor()
@@ -269,7 +273,7 @@ def contact_evidence(website: str, workers: int = 4) -> dict:
     except Exception:
         targets = [(None, website)]
     urls = [u for _, u in targets]
-    out = ex.extract(urls, concurrency=workers)
+    out = ex.extract(urls, concurrency=workers, timeout=timeout)
     cov = Coverage(checked=urls, ok=[r.url for r in out.results],
                    failed=[{"url": e.get("url"), "error": str(e.get("error", ""))[:80]}
                            for e in (out.errors or [])])
@@ -308,7 +312,7 @@ def contact_evidence(website: str, workers: int = 4) -> dict:
     return {"domain": domain, "facts": facts, "coverage": cov, "whois": whois, "firmographics": fg}
 
 
-def contact_evidence_many(websites, site_workers=5, page_workers=4):
+def contact_evidence_many(websites, site_workers=5, page_workers=4, timeout=20):
     """Enrich MANY sites concurrently — the cross-site parallelism a single call can't do. Each
     site already fetches its own pages in parallel; this fans out across sites too, so a list of
     leads enriches at once instead of one-at-a-time. Results are returned in input order; a site
@@ -318,7 +322,7 @@ def contact_evidence_many(websites, site_workers=5, page_workers=4):
     per site (core._BROWSER_MAX_CONCURRENCY), so keep site_workers modest to bound RAM."""
     def _one(w):
         try:
-            return contact_evidence(w, workers=page_workers)
+            return contact_evidence(w, workers=page_workers, timeout=timeout)
         except Exception as e:
             return {"website": w, "error": str(e)[:120]}
     with ThreadPoolExecutor(max_workers=max(1, site_workers)) as pool:

@@ -149,7 +149,7 @@ def test_fediverse_handle_not_email():
 def test_contact_evidence_many_concurrent_order_and_errors(monkeypatch):
     import pith.cli as c
 
-    def fake(w, workers=4):
+    def fake(w, workers=4, timeout=20):
         if "bad" in w:
             raise RuntimeError("boom")
         return {"domain": w, "facts": []}
