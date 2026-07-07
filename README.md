@@ -229,3 +229,10 @@ optional LLM call. All three are free. This is that, packaged.
 ## Credits
 
 Profile-enumeration site data (`pith/osint_sites.json`) is vendored from the [Sherlock Project](https://github.com/sherlock-project/sherlock) (MIT). Disposable-email list from [umuterturk/email-verifier](https://github.com/umuterturk/email-verifier) (MIT). pith reimplements the check logic; it does not depend on those packages.
+
+## Agent skill (Claude Code)
+
+`skills/prospecting-with-pith/` is a Claude Code skill that teaches an agent to use pith for
+sales-intelligence work — validating/cleaning contact lists, company dossiers, ranking accounts,
+and OSINT multi-channel reach — with the exact API and the honest boundaries. Copy it to
+`~/.claude/skills/` (or it's picked up automatically if this repo's skills dir is on your skill path).
