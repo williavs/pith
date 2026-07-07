@@ -50,6 +50,46 @@ def check_domains(domains, workers=50):
     return out
 
 
+def _site_domain(url):
+    """A website URL/domain -> bare host (no scheme/www/path). '' if unusable."""
+    import urllib.parse
+    u = str(url).strip()
+    if not u or u.lower() in ("nan", "none"):
+        return ""
+    host = urllib.parse.urlsplit(u if "//" in u else "//" + u).netloc.lower()
+    return host[4:] if host.startswith("www.") else host
+
+
+def _site_live(domain, timeout=6):
+    """Does the domain serve a live website? HEAD (then GET) https, then http; 2xx/3xx = live.
+    Bounded so a dead/hostile host fails fast. Best-effort — some live sites block bots (-> False)."""
+    import urllib.request
+    for scheme in ("https://", "http://"):
+        for method in ("HEAD", "GET"):
+            try:
+                req = urllib.request.Request(scheme + domain, method=method,
+                                             headers={"User-Agent": "Mozilla/5.0 pith-listcleaner"})
+                with urllib.request.urlopen(req, timeout=timeout) as r:
+                    return 200 <= r.status < 400
+            except urllib.error.HTTPError as e:
+                return e.code < 400 or e.code in (401, 403, 405, 429)   # answered = server is up
+            except Exception:
+                continue
+    return False
+
+
+def check_websites(domains, workers=40):
+    """Website liveness per UNIQUE domain (deduped): {domain: live_bool}. HTTP, so slower than
+    the DNS checks — dedup + bound is what makes it feasible at list scale."""
+    out = {}
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        for i, (d, live) in enumerate(pool.map(lambda d: (d, _site_live(d)), domains), 1):
+            out[d] = live
+            if i % 1000 == 0:
+                _log(f"  website liveness {i}/{len(domains)} domains")
+    return out
+
+
 def _quality(row) -> str:
     """Transparent sell-ability tier — filterable, not a black-box score."""
     if not row["email_syntax"] or row["is_disposable"]:
@@ -62,14 +102,15 @@ def _quality(row) -> str:
     return "sellable"
 
 
-def clean(path, email_col, phone_col, out_csv, workers=50, limit=None):
+def clean(path, email_col, phone_cols, out_csv, website_col=None, workers=50, limit=None, trim=True):
     import pandas as pd
 
     t0 = time.time()
     _log(f"reading {path}")
-    # force email/phone to string — else read_csv parses '+12817682900' as int64 and drops the '+',
-    # breaking E.164 phone validation (and mangles long numeric IDs / leading-zero values generally).
-    strcols = {c: str for c in (email_col, phone_col)}
+    phone_cols = [c.strip() for c in (phone_cols or "").split(",") if c.strip()]
+    # force email/phone/website to string — else read_csv/xlsx parses '+12817682900' as int64 and
+    # drops the '+', breaking E.164 phone validation (and mangles long IDs / leading-zero values).
+    strcols = {c: str for c in ([email_col] + phone_cols + ([website_col] if website_col else []))}
     df = (pd.read_excel(path, dtype=strcols) if str(path).lower().endswith((".xlsx", ".xls"))
           else pd.read_csv(path, dtype=strcols))
     if limit:
@@ -86,19 +127,31 @@ def clean(path, email_col, phone_col, out_csv, workers=50, limit=None):
     df["is_freemail"] = [x.get("is_freemail", False) for x in ev]
     df["email_domain"] = [x.get("domain", "") for x in ev]
 
-    if phone_col in df.columns:
-        pi = [phone_intel(str(p)) if pd.notna(p) else {} for p in df[phone_col]]
+    # phone: coalesce the first non-empty across the given phone columns (Apollo lists have several)
+    present = [c for c in phone_cols if c in df.columns]
+    if present:
+        best = df[present].apply(lambda r: next((str(v) for v in r if pd.notna(v) and str(v).strip()), ""), axis=1)
+        pi = [phone_intel(p) if p else {} for p in best]
+        df["phone_best"] = best
         df["phone_valid"] = [x.get("valid", False) for x in pi]
         df["phone_e164"] = [x.get("e164", "") for x in pi]
         df["phone_region"] = [x.get("region", "") for x in pi]
         df["phone_line_type"] = [x.get("line_type", "") for x in pi]
 
-    # --- Tier 2: deliverability, deduped by domain ---
+    # --- Tier 2: email deliverability, deduped by domain ---
     domains = sorted({d for d in df["email_domain"] if d})
-    _log(f"tier 2: deliverability on {len(domains):,} unique domains (of {n:,} rows)")
+    _log(f"tier 2: email deliverability on {len(domains):,} unique domains (of {n:,} rows)")
     dmap = check_domains(domains, workers=workers) if domains else {}
     df["domain_resolves"] = [dmap.get(d, (False, None))[0] for d in df["email_domain"]]
     df["has_mx"] = [dmap.get(d, (False, None))[1] for d in df["email_domain"]]
+
+    # --- Tier 2b: website liveness (only when a website column exists), deduped by domain ---
+    if website_col and website_col in df.columns:
+        df["website_domain"] = [_site_domain(u) for u in df[website_col]]
+        wdoms = sorted({d for d in df["website_domain"] if d})
+        _log(f"tier 2b: website liveness on {len(wdoms):,} unique sites")
+        wmap = check_websites(wdoms, workers=max(20, workers // 2)) if wdoms else {}
+        df["website_live"] = [wmap.get(d, False) if d else "" for d in df["website_domain"]]
 
     # --- dedup + quality ---
     el = df[email_col].astype(str).str.lower()
@@ -109,6 +162,14 @@ def clean(path, email_col, phone_col, out_csv, workers=50, limit=None):
     summary = _summarize(df, n, time.time() - t0)
     Path(out_csv).with_suffix(".summary.json").write_text(json.dumps(summary, indent=2))
     _log(f"wrote {out_csv} + summary in {summary['elapsed_s']}s")
+
+    if trim:  # trimmed = the fat cut off: deliverable, deduped contacts you'd actually work
+        keep = df[(df["quality"] != "dead") & (~df["is_duplicate_email"])]
+        trim_path = str(Path(out_csv).with_suffix("")) + ".trimmed.csv"
+        keep.to_csv(trim_path, index=False)
+        _log(f"trimmed {n:,} -> {len(keep):,} contactable ({100*len(keep)//n if n else 0}%) -> {trim_path}")
+        summary["trimmed_rows"] = len(keep)
+
     print(json.dumps(summary, indent=2))
     return summary
 
@@ -134,16 +195,22 @@ def _summarize(df, n, elapsed):
         # phonenumbers can't split mobile/fixed for NANP (returns fixed_or_mobile), so report the
         # distribution rather than a single misleading "mobile %".
         s["phone_line_types"] = {k: int(v) for k, v in df.loc[df["phone_valid"], "phone_line_type"].value_counts().items()}
+    if "website_live" in df:
+        s["website_live"] = rate(df["website_live"] == True)  # noqa: E712
     s["sellable_pct"] = round(100 * (df["quality"] == "sellable").mean(), 1)
     return s
 
 
 if __name__ == "__main__":
-    ap = argparse.ArgumentParser(description="Validate + clean a stale contact list (email/phone/deliverability).")
+    ap = argparse.ArgumentParser(description="Validate + clean a stale contact list (email/phone/website/deliverability).")
     ap.add_argument("file", help="xlsx or csv contact list")
     ap.add_argument("-o", "--out", default="cleaned.csv", help="output CSV (default cleaned.csv)")
     ap.add_argument("--email-col", default="email")
-    ap.add_argument("--phone-col", default="sanitized_phone")
-    ap.add_argument("--workers", type=int, default=50, help="parallel DNS lookups (default 50)")
+    ap.add_argument("--phone-col", default="sanitized_phone", help="phone column(s), comma-separated -> first non-empty wins")
+    ap.add_argument("--website-col", default=None, help="website column to verify liveness (optional)")
+    ap.add_argument("--workers", type=int, default=50, help="parallel lookups (default 50)")
+    ap.add_argument("--no-trim", action="store_true", help="skip writing the trimmed (contactable-only) CSV")
+    ap.add_argument("--limit", type=int, default=None, help="cap rows (for testing)")
     args = ap.parse_args()
-    clean(os.path.expanduser(args.file), args.email_col, args.phone_col, args.out, workers=args.workers)
+    clean(os.path.expanduser(args.file), args.email_col, args.phone_col, args.out,
+          website_col=args.website_col, workers=args.workers, limit=args.limit, trim=not args.no_trim)

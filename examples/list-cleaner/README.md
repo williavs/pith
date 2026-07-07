@@ -28,8 +28,21 @@ uv run --with pandas --with openpyxl --with dnspython python examples/list-clean
 uv run --with streamlit --with pandas streamlit run examples/list-cleaner/dashboard.py
 ```
 
-`clean.py` flags: `--email-col` (default `email`), `--phone-col` (default `sanitized_phone`),
-`--workers` (parallel DNS, default 50), `--limit` (cap rows, for testing).
+`clean.py` flags: `--email-col` (default `email`), `--phone-col` (comma-separated → first non-empty
+wins, for Apollo lists with several phone columns), `--website-col` (verify site liveness, optional),
+`--workers` (parallel lookups), `--no-trim` (skip the trimmed output), `--limit` (cap rows, testing).
+
+Every run writes **two** files: `<out>.csv` (all rows + validation columns) and
+`<out>.trimmed.csv` (the fat cut off — deliverable, deduped contacts you'd actually work).
+
+Example (a rich Apollo export with a Website column + several phone fields):
+
+```sh
+python examples/list-cleaner/clean.py "list.xlsx" -o out.csv \
+    --email-col Email \
+    --phone-col "Work Direct Phone,Mobile Phone,Corporate Phone" \
+    --website-col Website
+```
 
 ## What it validates
 
