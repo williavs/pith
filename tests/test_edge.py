@@ -146,6 +146,19 @@ def test_fediverse_handle_not_email():
     assert emails("real jane@acme.com") == ["jane@acme.com"]
 
 
+def test_contact_evidence_many_concurrent_order_and_errors(monkeypatch):
+    import pith.cli as c
+
+    def fake(w, workers=4):
+        if "bad" in w:
+            raise RuntimeError("boom")
+        return {"domain": w, "facts": []}
+    monkeypatch.setattr(c, "contact_evidence", fake)
+    res = c.contact_evidence_many(["a.com", "bad.com", "b.com"], site_workers=3)
+    assert [r.get("domain") or r.get("website") for r in res] == ["a.com", "bad.com", "b.com"]  # input order
+    assert "boom" in res[1]["error"]                     # a failed site -> error dict, batch survives
+
+
 def test_whois_proxy_emails_dropped():
     from pith.extract import _junk_email
     assert _junk_email("abc@acme.com.whoisproxy.org")           # privacy-proxy host

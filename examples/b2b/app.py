@@ -214,15 +214,18 @@ def _run_ui():
     targets = st.text_area("Target accounts", "ramp.com\nvercel.com\nnotion.so",
                            height=130, label_visibility="collapsed")
     if st.button("▸ ENRICH ACCOUNTS"):
+        from concurrent.futures import ThreadPoolExecutor
         lines = [ln for ln in targets.splitlines() if ln.strip()]
-        rows, prog = [], st.progress(0.0, "enriching…")
-        for i, ln in enumerate(lines):
+
+        def _acct(ln):
             try:
-                rows.append(enrich_account(ln, lens=lens))
+                return enrich_account(ln, lens=lens)
             except Exception as e:
-                rows.append({**{c: "" for c in ACCOUNT_COLS}, "name": ln, "lens_read": f"error: {e}"})
-            prog.progress((i + 1) / len(lines), f"{i+1}/{len(lines)}")
-        ss.rows = rows
+                return {**{c: "" for c in ACCOUNT_COLS}, "name": ln, "lens_read": f"error: {e}"}
+
+        with st.status(f"Enriching {len(lines)} accounts (3 at a time)…", expanded=False):
+            with ThreadPoolExecutor(max_workers=3) as pool:   # each account is heavy (jobs+news+financials+contact)
+                ss.rows = list(pool.map(_acct, lines))
 
     if ss.rows:
         # re-read the lens column without re-fetching

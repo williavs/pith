@@ -308,6 +308,23 @@ def contact_evidence(website: str, workers: int = 4) -> dict:
     return {"domain": domain, "facts": facts, "coverage": cov, "whois": whois, "firmographics": fg}
 
 
+def contact_evidence_many(websites, site_workers=5, page_workers=4):
+    """Enrich MANY sites concurrently — the cross-site parallelism a single call can't do. Each
+    site already fetches its own pages in parallel; this fans out across sites too, so a list of
+    leads enriches at once instead of one-at-a-time. Results are returned in input order; a site
+    that fails becomes {'website', 'error'} rather than sinking the batch.
+
+    ponytail: site_workers × page_workers bounds total fetch threads; the browser tier stays capped
+    per site (core._BROWSER_MAX_CONCURRENCY), so keep site_workers modest to bound RAM."""
+    def _one(w):
+        try:
+            return contact_evidence(w, workers=page_workers)
+        except Exception as e:
+            return {"website": w, "error": str(e)[:120]}
+    with ThreadPoolExecutor(max_workers=max(1, site_workers)) as pool:
+        return list(pool.map(_one, websites))
+
+
 def _facts_of(evidence: dict, kind: str):
     return [f for f in evidence["facts"] if f.kind == kind]
 
@@ -407,11 +424,10 @@ def searx_urls(query, limit=10):
 
 def prospect(query, limit=10, workers=4):
     """One category+geo search -> a lead list, each with contact EVIDENCE. GTM top of funnel."""
-    leads = []
-    for url in searx_urls(query, limit):
+    urls = list(searx_urls(query, limit))
+    for url in urls:
         print(f"[prospect] {url}", file=sys.stderr, flush=True)
-        leads.append(contact_evidence(url, workers=workers))
-    return leads
+    return contact_evidence_many(urls, page_workers=workers)   # concurrent across leads
 
 
 def _best_contact(lead):

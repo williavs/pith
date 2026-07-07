@@ -11,12 +11,23 @@ Run:  uv run --with streamlit --with overturemaps streamlit run examples/leadgen
 The mining + enrichment logic is in plain functions (mine_leads / enrich_contacts / enrich_tech)
 so it's testable without the UI — see tests/test_leadgen_app.py.
 """
+import logging
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from pith.leads import find_businesses, PROVIDERS          # noqa: E402
+from pith.leads import find_businesses, PROVIDERS, _CATEGORIES          # noqa: E402
+
+# prefilled dropdowns (typeable — accept_new_options lets you enter anything not listed)
+CATEGORY_OPTIONS = sorted(c.replace("_", " ") for c in _CATEGORIES)
+LOCATION_OPTIONS = [
+    "Phoenix, AZ", "Tucson, AZ", "Los Angeles, CA", "San Diego, CA", "San Francisco, CA",
+    "Sacramento, CA", "Las Vegas, NV", "Denver, CO", "Dallas, TX", "Houston, TX", "Austin, TX",
+    "San Antonio, TX", "Chicago, IL", "New York, NY", "Miami, FL", "Orlando, FL", "Tampa, FL",
+    "Atlanta, GA", "Charlotte, NC", "Nashville, TN", "Seattle, WA", "Portland, OR", "Boston, MA",
+    "Philadelphia, PA", "Columbus, OH", "Minneapolis, MN", "Kansas City, MO", "Tulsa, OK",
+]
 
 
 # ---------------------------------------------------------------------------
@@ -154,11 +165,81 @@ html, body, [class*="css"], .stApp{ font-family:"Tahoma","MS Sans Serif",sans-se
 [data-baseweb="input"] input, [data-baseweb="select"]>div, .stTextInput input, .stNumberInput input{
             background:#fff !important; border-radius:0 !important; border:2px solid !important;
             border-color:var(--sh) var(--hi) var(--hi) var(--sh) !important; font-family:inherit !important; }
+/* selectbox: the closed value AND the open dropdown menu — force dark text on white (baseweb
+   renders the menu in a separate popover layer my input rule didn't reach). Role selectors are
+   stable across baseweb versions. */
+[data-baseweb="select"] *, [data-baseweb="select"] input{ color:#000 !important; }
+[role="listbox"], [data-baseweb="popover"], [data-baseweb="menu"]{ background:#fff !important; }
+[role="option"]{ color:#000 !important; background:#fff !important; font-family:inherit !important; }
+[role="option"]:hover, [role="option"][aria-selected="true"]{ background:var(--navy) !important; color:#fff !important; }
 section[data-testid="stSidebar"]{ background:var(--silver) !important; border-right:2px solid var(--dk); }
 h1,h2,h3{ font-family:inherit !important; }
 [data-testid="stDataFrame"]{ border:2px solid; border-color:var(--sh) var(--hi) var(--hi) var(--sh); }
 </style>
 """
+
+
+_LOG_STD = set(logging.LogRecord("n", 20, "p", 1, "m", (), None).__dict__) | {"message", "asctime", "taskName"}
+
+
+class _BufHandler(logging.Handler):
+    """Format each pith/scrapling log record into one firehose line (event + its extra fields)."""
+    def __init__(self, buf):
+        super().__init__()
+        self.buf = buf
+
+    def emit(self, r):
+        try:
+            extra = " ".join(f"{k}={v}" for k, v in r.__dict__.items()
+                             if k not in _LOG_STD and not k.startswith("_"))
+            self.buf.append(f"{r.name.split('.')[-1]:>10} · {r.getMessage()} {extra}".rstrip())
+        except Exception:
+            pass
+
+
+def _run_streaming(label, fn):
+    """Run fn() in a worker thread and firehose pith's backend logs (tier fetches, url_done,
+    scrapling 'Fetched (200)', trafilatura) into a live panel while it works. Returns fn()'s value."""
+    import threading
+    import time
+    from collections import deque
+
+    import streamlit as st
+
+    buf = deque(maxlen=500)
+    h = _BufHandler(buf)
+    h.setLevel(logging.DEBUG)
+    levels = {"pith": logging.DEBUG, "scrapling": logging.INFO,
+              "trafilatura": logging.INFO, "curl_cffi": logging.INFO}
+    saved = [(logging.getLogger(n), logging.getLogger(n).level) for n in levels]
+    for lg, _ in saved:
+        lg.addHandler(h)
+        lg.setLevel(levels[lg.name])
+    out = {}
+
+    def work():
+        try:
+            out["v"] = fn()
+        except Exception as e:  # surface in the caller, not the worker thread
+            out["e"] = e
+
+    t = threading.Thread(target=work, daemon=True)
+    t.start()
+    with st.status(label, expanded=True) as status:
+        panel = st.empty()
+        while t.is_alive():
+            panel.code("\n".join(list(buf)[-26:]) or "starting…", language="log")
+            time.sleep(0.25)
+        t.join()
+        panel.code("\n".join(list(buf)[-26:]) or "(no backend logs)", language="log")
+        status.update(state="error" if out.get("e") else "complete",
+                      label=f"{label}  {'failed' if out.get('e') else 'done'}")
+    for lg, lvl in saved:
+        lg.removeHandler(h)
+        lg.setLevel(lvl)
+    if out.get("e"):
+        raise out["e"]
+    return out.get("v")
 
 
 def _run_ui():
@@ -191,21 +272,26 @@ def _run_ui():
 
     st.markdown('<div class="win-body">', unsafe_allow_html=True)
     c1, c2, c3 = st.columns([3, 3, 1.4])
-    category = c1.text_input("Category", "dentists", label_visibility="collapsed", placeholder="category e.g. dentists")
-    location = c2.text_input("Location", "Phoenix, AZ", label_visibility="collapsed", placeholder="city, ST")
+    category = c1.selectbox("Category", CATEGORY_OPTIONS, index=CATEGORY_OPTIONS.index("dentists"),
+                            accept_new_options=True, label_visibility="collapsed",
+                            placeholder="category (pick or type your own)")
+    location = c2.selectbox("Location", LOCATION_OPTIONS, index=LOCATION_OPTIONS.index("Phoenix, AZ"),
+                            accept_new_options=True, label_visibility="collapsed",
+                            placeholder="city, ST (pick or type your own)")
     mine = c3.button("⛏ MINE", use_container_width=True)
 
     if mine:
-        with st.status(f"Mining '{category}' in {location}…", expanded=True) as status:
-            try:
-                rows, cov = mine_leads(category, location, sources=picked or "auto", limit=int(limit),
-                                       radius_km=radius or None, has_website=only_site,
-                                       has_phone=only_phone, min_confidence=min_conf)
-                ss.rows, ss.coverage = rows, cov
-                counts = " · ".join(f"{k}:{v}" for k, v in cov.get("counts", {}).items())
-                status.update(label=f"{len(rows)} leads  ({counts or 'no sources ran'})", state="complete")
-            except Exception as e:
-                status.update(label=f"mine failed: {e}", state="error")
+        try:
+            rows, cov = _run_streaming(
+                f"⛏ Mining '{category}' in {location}…",
+                lambda: mine_leads(category, location, sources=picked or "auto", limit=int(limit),
+                                   radius_km=radius or None, has_website=only_site,
+                                   has_phone=only_phone, min_confidence=min_conf))
+            ss.rows, ss.coverage = rows, cov
+            counts = " · ".join(f"{k}:{v}" for k, v in cov.get("counts", {}).items())
+            st.caption(f"{len(rows)} leads  ({counts or 'no sources ran'})")
+        except Exception as e:
+            st.error(f"mine failed: {e}")
 
     if ss.rows:
         df = pd.DataFrame(ss.rows)[LEAD_COLS]
@@ -225,13 +311,23 @@ def _run_ui():
 
         if (do_contacts or do_tech) and sel:
             fn = enrich_contacts if do_contacts else enrich_tech
-            prog = st.progress(0.0, "enriching…")
-            for i, idx in enumerate(sel):
+            log = logging.getLogger("pith")
+            rows_ref = ss.rows        # plain list — bound here so the worker thread never touches session_state
+
+            def _one(idx):
+                r = rows_ref[idx]
+                log.info("enrich_row", extra={"lead": r.get("name", "")[:34], "site": r.get("website", "")})
                 try:
-                    ss.rows[idx].update(fn(ss.rows[idx]))
+                    r.update(fn(r))
                 except Exception as e:
-                    ss.rows[idx]["framework" if do_tech else "email"] = f"err: {str(e)[:30]}"
-                prog.progress((i + 1) / len(sel), f"enriched {i + 1}/{len(sel)}")
+                    r["framework" if do_tech else "email"] = f"err: {str(e)[:30]}"
+
+            def _batch():                     # enrich leads concurrently (was one-at-a-time)
+                from concurrent.futures import ThreadPoolExecutor
+                with ThreadPoolExecutor(max_workers=5) as pool:
+                    list(pool.map(_one, sel))
+
+            _run_streaming(f"{'✉ contacts' if do_contacts else '🖧 tech'} · enriching {len(sel)} leads (5 at a time)…", _batch)
             st.rerun()
 
         enriched = sum(1 for r in ss.rows if r.get("enriched"))
