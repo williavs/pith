@@ -70,11 +70,12 @@ def run(path, out, company_col, tech_col, email_col, top):
     comp["_contacts"] = grp.size()
     comp["score"] = comp.apply(score, axis=1)
 
-    cols = [company_col, "_contacts", "_wedge", "# Employees", "Annual Revenue",
-            "Total Funding", "Industry", email_col, "score"]
-    cols = [c for c in cols if c in comp.columns or c in ("_contacts", "_wedge", "score")]
-    ranked = comp.reset_index().sort_values("score", ascending=False)[
-        [c for c in cols if c in comp.reset_index().columns]]
+    cols = [company_col, "_contacts", "score", "_wedge", "# Employees", "Annual Revenue",
+            "Total Funding", "Industry", "Website",
+            # the representative contact to reach — carried through so the shortlist is actionable
+            "First Name", "Last Name", "Title", email_col, "Person Linkedin Url", "Work Direct Phone"]
+    r = comp.reset_index()
+    ranked = r.sort_values("score", ascending=False)[[c for c in cols if c in r.columns]]
     ranked = ranked.rename(columns={"_wedge": "duct_tape_stack", "_contacts": "contacts"})
     if top:
         ranked = ranked.head(top)
