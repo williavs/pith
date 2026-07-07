@@ -31,6 +31,21 @@ def _log(m):
     print(f"[enrich] {m}", file=sys.stderr, flush=True)
 
 
+# Per-call hard timeout: some pith sources (SEC efts, a slow news feed) can hang without an
+# internal timeout, and one hang starves a worker for the whole batch. Cap every call; a hang
+# returns None (partial dossier for that company) and the run keeps moving. The leaked thread
+# parks in this pool's headroom.
+from concurrent.futures import TimeoutError as _Timeout
+_GUARD = ThreadPoolExecutor(max_workers=64)
+
+
+def _bounded(fn, timeout=25):
+    try:
+        return _GUARD.submit(fn).result(timeout=timeout)
+    except Exception:
+        return None
+
+
 def enrich_company(domain, name):
     """One company -> a signal dossier. Every pith call guarded; a dead source never sinks the row."""
     from pith.cli import website_intel
@@ -41,35 +56,28 @@ def enrich_company(domain, name):
     d = {c: "" for c in ACCOUNT_COLS}
     d.update(domain=domain, company=name, open_roles=0)
     url = "https://" + domain
-    try:
-        wi = website_intel(url)
-        d["tech"], d["modernness"] = wi.get("framework") or wi.get("builder") or "", wi.get("modernness_grade") or ""
-    except Exception:
-        pass
-    try:
-        j = jobs_search(name, domain, render=False)   # render=False: ATS-API hiring counts, NO per-company
-        d["open_roles"], d["ats"] = j.get("count", 0), j.get("ats") or ""   # browser (browser tier = ~8min/co at batch scale)
-    except Exception:
-        pass
-    try:
-        tags = {}
-        for it in news_search(name, domain=domain, window_days=120):
-            s = it.get("signal")
-            if s and s != "news":
-                tags[s] = tags.get(s, 0) + 1
-        d["signals"] = " ".join(f"{k}:{v}" for k, v in sorted(tags.items(), key=lambda x: -x[1]))
-    except Exception:
-        pass
-    try:
-        ci = company_intel(name)
-        raises = (ci.get("funding") or {}).get("raises") or []
-        if ci.get("kind") == "us_public":
-            d["funding"] = "public"
-        elif raises:
-            r = max(raises, key=lambda x: float(x.get("total_sold") or 0))
-            d["funding"] = f"raised {r.get('total_sold')}"
-    except Exception:
-        pass
+
+    wi = _bounded(lambda: website_intel(url)) or {}
+    d["tech"], d["modernness"] = wi.get("framework") or wi.get("builder") or "", wi.get("modernness_grade") or ""
+
+    j = _bounded(lambda: jobs_search(name, domain, render=False)) or {}   # render=False: ATS-API only, no browser
+    d["open_roles"], d["ats"] = j.get("count", 0), j.get("ats") or ""
+
+    nw = _bounded(lambda: news_search(name, domain=domain, window_days=120)) or []
+    tags = {}
+    for it in nw:
+        s = it.get("signal")
+        if s and s != "news":
+            tags[s] = tags.get(s, 0) + 1
+    d["signals"] = " ".join(f"{k}:{v}" for k, v in sorted(tags.items(), key=lambda x: -x[1]))
+
+    ci = _bounded(lambda: company_intel(name)) or {}
+    raises = (ci.get("funding") or {}).get("raises") or []
+    if ci.get("kind") == "us_public":
+        d["funding"] = "public"
+    elif raises:
+        r = max(raises, key=lambda x: float(x.get("total_sold") or 0))
+        d["funding"] = f"raised {r.get('total_sold')}"
     d["score"] = _score(d)
     return d
 
