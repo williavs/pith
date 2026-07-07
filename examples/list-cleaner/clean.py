@@ -13,7 +13,7 @@ Then a transparent `quality` tag (sellable / risky / dead) you can filter — no
 
 Run:
   uv run --with pandas --with openpyxl --with dnspython python examples/list-cleaner/clean.py \
-      "~/Downloads/Business Owner 100,000.xlsx" -o cleaned.csv
+      "~/Downloads/contacts.xlsx" -o cleaned.csv
   # dnspython is optional; without it MX is skipped and deliverability falls back to domain-resolves.
 """
 import argparse
