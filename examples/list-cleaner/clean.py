@@ -1,0 +1,149 @@
+"""Batch contact-list cleanup + validation for a stale B2B list — the "I have 100k old leads,
+which are still worth selling to?" job. Handles the whole file on disk with pith's deterministic
+validators; NO live crawling (too slow at scale). Produces cleaned.csv + summary.json.
+
+Tiers, cheapest first:
+  1. offline, every row   — email syntax + role/disposable/freemail (pith.verify_email),
+                            phone valid/region/line-type/E.164 (pith.phone_intel)
+  2. deduped by domain    — deliverability: does the email domain resolve + have an MX record?
+                            (24k unique domains for a 73k list — the whole point of deduping)
+  3. (skipped at scale)   — LinkedIn/site/company checks are walled + slow; do those on a shortlist
+
+Then a transparent `quality` tag (sellable / risky / dead) you can filter — no hidden score.
+
+Run:
+  uv run --with pandas --with openpyxl --with dnspython python examples/list-cleaner/clean.py \
+      "~/Downloads/Business Owner 100,000.xlsx" -o cleaned.csv
+  # dnspython is optional; without it MX is skipped and deliverability falls back to domain-resolves.
+"""
+import argparse
+import json
+import os
+import sys
+import time
+from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
+from pith import verify_email                     # noqa: E402
+from pith.phoneintel import phone_intel           # noqa: E402
+
+
+def _log(msg):
+    print(f"[clean] {msg}", file=sys.stderr, flush=True)
+
+
+def check_domains(domains, workers=50):
+    """Deliverability per UNIQUE domain (dedup is the speedup): {domain: (resolves, has_mx)}.
+    Parallel DNS; has_mx is None when dnspython isn't installed."""
+    from pith.extract import _domain_resolves, _domain_has_mx
+
+    def one(d):
+        return d, (_domain_resolves(d), _domain_has_mx(d))
+    out = {}
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        for i, (d, res) in enumerate(pool.map(one, domains), 1):
+            out[d] = res
+            if i % 2000 == 0:
+                _log(f"  deliverability {i}/{len(domains)} domains")
+    return out
+
+
+def _quality(row) -> str:
+    """Transparent sell-ability tier — filterable, not a black-box score."""
+    if not row["email_syntax"] or row["is_disposable"]:
+        return "dead"
+    mx = row["has_mx"]
+    if mx is False or (mx is None and not row["domain_resolves"]):
+        return "dead"                        # domain won't take mail / doesn't exist
+    if row["is_role"] or row["is_freemail"]:
+        return "risky"                       # deliverable but generic/personal, not the owner's biz inbox
+    return "sellable"
+
+
+def clean(path, email_col, phone_col, out_csv, workers=50, limit=None):
+    import pandas as pd
+
+    t0 = time.time()
+    _log(f"reading {path}")
+    # force email/phone to string — else read_csv parses '+12817682900' as int64 and drops the '+',
+    # breaking E.164 phone validation (and mangles long numeric IDs / leading-zero values generally).
+    strcols = {c: str for c in (email_col, phone_col)}
+    df = (pd.read_excel(path, dtype=strcols) if str(path).lower().endswith((".xlsx", ".xls"))
+          else pd.read_csv(path, dtype=strcols))
+    if limit:
+        df = df.head(limit)
+    n = len(df)
+    _log(f"{n:,} rows")
+
+    # --- Tier 1: offline, every row ---
+    _log("tier 1: email syntax + phone validity (offline)")
+    ev = [verify_email(str(e)) if pd.notna(e) else {"valid_syntax": False} for e in df[email_col]]
+    df["email_syntax"] = [x.get("valid_syntax", False) for x in ev]
+    df["is_role"] = [x.get("is_role", False) for x in ev]
+    df["is_disposable"] = [x.get("is_disposable", False) for x in ev]
+    df["is_freemail"] = [x.get("is_freemail", False) for x in ev]
+    df["email_domain"] = [x.get("domain", "") for x in ev]
+
+    if phone_col in df.columns:
+        pi = [phone_intel(str(p)) if pd.notna(p) else {} for p in df[phone_col]]
+        df["phone_valid"] = [x.get("valid", False) for x in pi]
+        df["phone_e164"] = [x.get("e164", "") for x in pi]
+        df["phone_region"] = [x.get("region", "") for x in pi]
+        df["phone_line_type"] = [x.get("line_type", "") for x in pi]
+
+    # --- Tier 2: deliverability, deduped by domain ---
+    domains = sorted({d for d in df["email_domain"] if d})
+    _log(f"tier 2: deliverability on {len(domains):,} unique domains (of {n:,} rows)")
+    dmap = check_domains(domains, workers=workers) if domains else {}
+    df["domain_resolves"] = [dmap.get(d, (False, None))[0] for d in df["email_domain"]]
+    df["has_mx"] = [dmap.get(d, (False, None))[1] for d in df["email_domain"]]
+
+    # --- dedup + quality ---
+    el = df[email_col].astype(str).str.lower()
+    df["is_duplicate_email"] = el.duplicated(keep="first") & el.ne("nan")
+    df["quality"] = df.apply(_quality, axis=1)
+
+    df.to_csv(out_csv, index=False)
+    summary = _summarize(df, n, time.time() - t0)
+    Path(out_csv).with_suffix(".summary.json").write_text(json.dumps(summary, indent=2))
+    _log(f"wrote {out_csv} + summary in {summary['elapsed_s']}s")
+    print(json.dumps(summary, indent=2))
+    return summary
+
+
+def _summarize(df, n, elapsed):
+    def rate(mask):
+        return {"n": int(mask.sum()), "pct": round(100 * mask.mean(), 1)}
+    q = df["quality"].value_counts().to_dict()
+    s = {
+        "rows": n, "elapsed_s": round(elapsed, 1),
+        "quality": {k: int(v) for k, v in q.items()},
+        "email_valid_syntax": rate(df["email_syntax"]),
+        "email_disposable": rate(df["is_disposable"]),
+        "email_role": rate(df["is_role"]),
+        "email_freemail": rate(df["is_freemail"]),
+        "domain_resolves": rate(df["domain_resolves"]),
+        "duplicate_email": rate(df["is_duplicate_email"]),
+    }
+    if "has_mx" in df:
+        s["email_has_mx"] = rate(df["has_mx"] == True)  # noqa: E712 (None/False both excluded)
+    if "phone_valid" in df:
+        s["phone_valid"] = rate(df["phone_valid"])
+        # phonenumbers can't split mobile/fixed for NANP (returns fixed_or_mobile), so report the
+        # distribution rather than a single misleading "mobile %".
+        s["phone_line_types"] = {k: int(v) for k, v in df.loc[df["phone_valid"], "phone_line_type"].value_counts().items()}
+    s["sellable_pct"] = round(100 * (df["quality"] == "sellable").mean(), 1)
+    return s
+
+
+if __name__ == "__main__":
+    ap = argparse.ArgumentParser(description="Validate + clean a stale contact list (email/phone/deliverability).")
+    ap.add_argument("file", help="xlsx or csv contact list")
+    ap.add_argument("-o", "--out", default="cleaned.csv", help="output CSV (default cleaned.csv)")
+    ap.add_argument("--email-col", default="email")
+    ap.add_argument("--phone-col", default="sanitized_phone")
+    ap.add_argument("--workers", type=int, default=50, help="parallel DNS lookups (default 50)")
+    args = ap.parse_args()
+    clean(os.path.expanduser(args.file), args.email_col, args.phone_col, args.out, workers=args.workers)

@@ -18,3 +18,7 @@ examples/datatables/index.html
 # persona demo outputs with real private-individual PII — regenerate locally via the driver
 examples/personas/agency-founder/opportunities.json
 examples/personas/agency-founder/outreach.md
+
+# list-cleaner outputs contain real PII (cleaned contact lists) — never commit
+examples/list-cleaner/*.csv
+examples/list-cleaner/*.summary.json

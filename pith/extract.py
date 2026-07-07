@@ -525,12 +525,57 @@ def _email_syntax_ok(email: str) -> bool:
     return len(tld) >= 2 and tld.replace("-", "").isalpha()   # .isalpha() is unicode-aware
 
 
-def verify_email(email: str, check_domain: bool = False) -> dict:
+import functools
+
+
+def _dns_resolver():
+    """A dnspython resolver with a SHORT budget — a dead domain must fail in ~3s, not block ~20s on
+    the OS default (which tanks throughput when a stale list has thousands of dead domains)."""
+    import dns.resolver
+    r = dns.resolver.Resolver()
+    r.timeout = r.lifetime = 3.0
+    return r
+
+
+@functools.lru_cache(maxsize=200_000)
+def _domain_resolves(domain: str) -> bool:
+    try:                                        # bounded dnspython A-lookup when available
+        import dns.resolver  # noqa: F401
+        try:
+            return bool(_dns_resolver().resolve(domain, "A"))
+        except Exception:
+            return False
+    except ImportError:                         # stdlib fallback (can block on dead domains)
+        import socket
+        try:
+            socket.getaddrinfo(domain, None)
+            return True
+        except Exception:
+            return False
+
+
+@functools.lru_cache(maxsize=200_000)
+def _domain_has_mx(domain: str):
+    """True/False if the domain has an MX record — the real 'accepts mail' signal. None when
+    dnspython isn't installed (pip install 'pith[email]'); caller falls back to domain_resolves."""
+    try:
+        import dns.resolver  # noqa: F401
+    except ImportError:
+        return None
+    try:
+        return len(_dns_resolver().resolve(domain, "MX")) > 0
+    except Exception:
+        return False
+
+
+def verify_email(email: str, check_domain: bool = False, check_mx: bool = False) -> dict:
     """Deterministic email quality signals — no SMTP probe, no external API, no LLM.
     Reports: valid_syntax, is_role (generic mailbox), is_disposable (throwaway domain),
-    has_alias (plus-tag). `check_domain=True` adds a stdlib DNS resolve (network) to catch
-    dead/typo domains. NOT a deliverability check — real SMTP verification is unreliable
-    (catch-all / greylisting) and risks sender reputation, so it's deliberately omitted."""
+    has_alias (plus-tag). `check_domain=True` adds a stdlib DNS resolve (catches dead/typo
+    domains — the main rot in a stale list). `check_mx=True` adds an MX-record lookup (the real
+    'accepts mail' deliverability signal; needs `pith[email]` → dnspython, else has_mx=None).
+    Both are cached per domain. SMTP verification is deliberately omitted — it's unreliable
+    (catch-all/greylisting) and risks sender reputation."""
     email = (email or "").strip().lower()
     if not _email_syntax_ok(email):
         return {"email": email, "valid_syntax": False}
@@ -542,12 +587,9 @@ def verify_email(email: str, check_domain: bool = False) -> dict:
            "is_role": base in _ROLE_LOCALS, "is_disposable": domain in _disposable(),
            "is_freemail": freemail, "has_alias": "+" in local}
     if check_domain:
-        import socket
-        try:
-            socket.getaddrinfo(domain, None)
-            out["domain_resolves"] = True
-        except Exception:
-            out["domain_resolves"] = False
+        out["domain_resolves"] = _domain_resolves(domain)
+    if check_mx:
+        out["has_mx"] = _domain_has_mx(domain)
     return out
 
 

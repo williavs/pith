@@ -28,6 +28,11 @@ places = [
     "overturemaps>=0.9.0",
     "duckdb>=1.0",
 ]
+# Email deliverability: MX-record lookups for verify_email(check_mx=True). Without this, MX is
+# reported as None and callers fall back to the stdlib domain-resolves check (no extra needed).
+email = [
+    "dnspython>=2.6",
+]
 
 [project.scripts]
 pith = "pith.cli:main"
