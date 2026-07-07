@@ -5,9 +5,10 @@ discovery) and pith's extraction core (contact + tech enrichment).
 
 **Two clicks to a list:** pick a category + a location, hit **MINE**. pith pulls real local
 businesses from every configured source and waterfall-merges them — each row shows which sources
-agree (`overpass+overture`) and a confidence score. Then select rows and **ENRICH**: pith crawls
-each business's website for emails/phones and fingerprints its tech stack, growing the grid.
-**Export CSV** when you're done.
+agree (`overpass+overture`) and a confidence score. Then select rows and **ENRICH**: one crawl of
+each business's site fills owner/role emails, the **decision-maker** (name + title from the team
+page), extra phones, socials, and — free from the site's own schema — **rating, reviews, and
+hours**, plus a tech-stack grade. **Export CSV** when you're done.
 
 ## Run
 

@@ -47,8 +47,11 @@ for r in out.results:
 
 **Result fields:** `r.url`, `r.title`, `r.publish_date`, `r.markdown` (canonical clean markdown),
 `r.error` (per-row failure reason, or `None`), plus auto-extracted `r.emails`, `r.phones`,
-`r.socials`, `r.addresses` (business street addresses from schema.org), `r.structured`
-(`list[dict]` — schema.org entities), `r.meta` (OpenGraph + author/date).
+`r.socials` (profile links matched against a ~480-site list, not just the big five),
+`r.addresses`, `r.structured` (`list[dict]` — schema.org entities, kept **whole**: not just
+name/title but `rating`/`hours`/`priceRange`/`foundingDate`/`numberOfEmployees`/`geo` when the
+page publishes them), `r.meta` (**every** OpenGraph/Twitter/meta tag, incl. `business:contact_data:*`).
+pith surfaces the raw data and labels it; you filter — it doesn't pre-drop.
 
 **Parallel-compat aliases:** `r.excerpts` (`[r.markdown]`) and `r.full_content` (`r.markdown`) —
 so a Parallel Extract mapping ports unchanged.
@@ -77,6 +80,24 @@ pith --from companies.csv --workers 8     # parallel fetches
 Beyond single-URL extraction, pith has a keyless business-data layer built on the same
 evidence model (values carry their sources + corroboration, never a hidden score).
 
+**One call, the whole company.** `contact_evidence` crawls a site's key pages (team/about/contact,
+discovered by URL *and* nav text, with a browser fallback for JS navs) and folds every source
+together — text, schema.org, OpenGraph, Cloudflare-obfuscated, and WHOIS:
+
+```python
+from pith.cli import contact_evidence
+from pith.recipes import owner_email, people
+
+ev = contact_evidence("https://arizonabiltmoredentistry.com")   # no key, no LLM
+owner_email(ev["facts"])        # -> best contact email (evidence-ranked, you apply the judgment)
+people(ev["facts"])             # -> decision-makers: [{name, title, emails, corroboration}]
+ev["firmographics"]             # -> {'rating': '5.0', 'review_count': '4', 'hours': 'Mo-Th 06:00-18:00',
+                                #     'priceRange': '$', 'lat': ..., 'lon': ...}   ← free, from the site's own schema
+ev["facts"]                     # -> every email/phone/social/address as a Fact(value, sources, corroboration)
+```
+
+**Discover, then enrich.**
+
 ```python
 from pith.leads import find_businesses
 res = find_businesses("dentists", "Phoenix, AZ", limit=100)   # OSM/Overpass + Overture, keyless
@@ -84,6 +105,9 @@ for b in res["businesses"]:
     print(b["confidence"], b["providers"], b["name"], b["phone"], b["website"])
 ```
 
+- **`pith.cli.contact_evidence(website)`** — one call → contacts + decision-makers + firmographics
+  (rating/hours/founded/employees/geo) + socials, all as sourced evidence. Apply `pith.recipes`
+  (`owner_email`, `rank_phones`, `people`) with your own intent on top — pith never picks for you.
 - **`pith.leads.find_businesses(category, location, ...)`** — multi-source local-business
   discovery. Providers: **Overpass** (OSM, live) + **Overture** (bulk, needs `pith[places]`)
   keyless out of the box; **Yelp / Google / Foursquare** light up when you set a free key

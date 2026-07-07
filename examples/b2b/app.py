@@ -29,7 +29,7 @@ from urllib.parse import urlsplit
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-ACCOUNT_COLS = ["name", "domain", "industry", "employees", "founded", "hq",
+ACCOUNT_COLS = ["name", "domain", "industry", "employees", "founded", "hq", "rating",
                 "funding", "open_roles", "top_depts", "ats", "tech", "modernness",
                 "signals", "email", "phone", "lens_read", "enriched"]
 
@@ -138,6 +138,13 @@ def enrich_account(target: str, lens: str = "generic") -> dict:
         phones = [f.value for f in rank_phones(facts)]
         d["email"] = (be.value if be else "") or (emails[0] if emails else "")
         d["phone"] = phones[0] if phones else ""
+        fg = ev.get("firmographics", {})       # free from the crawl — fills Wikidata blanks when the site publishes schema
+        if fg.get("foundingDate") and not d["founded"]:
+            d["founded"] = str(fg["foundingDate"])[:4]
+        if fg.get("numberOfEmployees") and not d["employees"]:
+            d["employees"] = str(fg["numberOfEmployees"])
+        if fg.get("rating"):
+            d["rating"] = fg["rating"] + (f" ({fg['review_count']})" if fg.get("review_count") else "")
     except Exception:
         pass
 

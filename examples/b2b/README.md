@@ -30,8 +30,10 @@ Paste domains (or `Name,domain`), one per line. Pick a lens. Enrich. Export CSV.
   noise on large companies (blog authors, customer logos, and advisors pollute the crawl). B2B
   decision-makers are LinkedIn / paid-B2B territory. (Website people extraction *is* reliable on
   small local businesses — the leadgen app keeps that column.)
-- **Firmographics need Wikidata** — many private companies aren't in it, so employees/founded/HQ
-  are often blank. Hiring + news + tech + funding do not depend on Wikidata.
+- **Firmographics come from Wikidata OR the site's own schema.** employees/founded/rating are
+  filled from the company's `schema.org` if it publishes it (free, via the crawl), else Wikidata —
+  which many private companies aren't in, so HQ/industry can still be blank. Hiring + news + tech +
+  funding don't depend on either.
 - **Funding is best-effort** — Form D matching is name-scoped; it can miss or under-count rounds
   for common company names.
 
