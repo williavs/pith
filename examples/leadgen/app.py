@@ -51,7 +51,7 @@ def _flatten(biz: dict) -> dict:
         "category": biz.get("category", ""),
         "email": "", "owner_email": "", "decision_maker": "", "title": "", "team": "",
         "rating": "", "hours": "", "linkedin": "", "socials": "", "extra_phones": "",
-        "framework": "", "modernness": "", "enriched": False,
+        "framework": "", "modernness": "", "enriched": "",
     }
 
 
@@ -74,7 +74,7 @@ def enrich_contacts(row: dict) -> dict:
     and the decision-maker (schema.org Person + jobTitle). Returns column updates. No-op w/o site."""
     site = row.get("website")
     if not site:
-        return {"error": "no website"}
+        return {"enriched": "no site"}
     from pith.cli import contact_evidence
     from pith.recipes import owner_email, people, rank_phones
     if not site.startswith("http"):
@@ -100,7 +100,7 @@ def enrich_contacts(row: dict) -> dict:
         "linkedin": linkedin,
         "socials": ", ".join(socials)[:160],
         "extra_phones": ", ".join(p for p in phones if p != row.get("phone"))[:120],
-        "enriched": True,
+        "enriched": "yes",
     }
 
 
@@ -123,7 +123,7 @@ def enrich_tech(row: dict) -> dict:
     """Fingerprint the row's website (framework + modernness grade). Returns column updates."""
     site = row.get("website")
     if not site:
-        return {"error": "no website"}
+        return {"enriched": "no site"}
     from pith.cli import website_intel
     if not site.startswith("http"):
         site = "https://" + site
@@ -131,7 +131,7 @@ def enrich_tech(row: dict) -> dict:
     return {
         "framework": intel.get("framework") or intel.get("builder") or "",
         "modernness": f"{intel.get('modernness_grade', '?')} ({intel.get('modernness_score', '?')})",
-        "enriched": True,
+        "enriched": "yes",
     }
 
 
@@ -295,7 +295,9 @@ def _run_ui():
 
     if ss.rows:
         df = pd.DataFrame(ss.rows)[LEAD_COLS]
-        st.caption(f"{len(df)} leads · select rows, then enrich")
+        n_site = sum(1 for r in ss.rows if r.get("website"))
+        st.caption(f"{len(df)} leads · **{n_site} have a website** (enrichable) · select rows, then enrich. "
+                   f"Tip: sort by the *website* column, or filter to sites, before enriching.")
         event = st.dataframe(df, use_container_width=True, height=430, hide_index=True,
                              on_select="rerun", selection_mode="multi-row",
                              column_config={
@@ -330,7 +332,7 @@ def _run_ui():
             _run_streaming(f"{'✉ contacts' if do_contacts else '🖧 tech'} · enriching {len(sel)} leads (5 at a time)…", _batch)
             st.rerun()
 
-        enriched = sum(1 for r in ss.rows if r.get("enriched"))
+        enriched = sum(1 for r in ss.rows if r.get("enriched") == "yes")
         st.markdown(f'<div class="win-status"><span class="cell">{len(ss.rows)} leads</span>'
                     f'<span class="cell">{enriched} enriched</span>'
                     f'<span class="cell">sources: {", ".join(ss.coverage.get("ran", [])) or "—"}</span>'

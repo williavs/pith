@@ -20,12 +20,12 @@ def test_flatten_shape():
     row = app._flatten(biz)
     assert list(row.keys()) == app.LEAD_COLS
     assert row["confidence"] == 0.79 and row["sources"] == "overpass+overture"
-    assert row["enriched"] is False and row["email"] == ""     # enrichment cols start empty
+    assert row["enriched"] == "" and row["email"] == ""     # enrichment cols start empty
 
 
 def test_enrich_guards_no_website():
-    assert app.enrich_contacts({"website": ""}) == {"error": "no website"}
-    assert app.enrich_tech({"name": "x"}) == {"error": "no website"}
+    assert app.enrich_contacts({"website": ""}) == {"enriched": "no site"}
+    assert app.enrich_tech({"name": "x"}) == {"enriched": "no site"}
 
 
 @pytest.mark.live
@@ -39,4 +39,4 @@ def test_mine_leads_live():
 @pytest.mark.live
 def test_enrich_tech_live():
     updates = app.enrich_tech({"website": "stripe.com"})
-    assert updates["enriched"] is True and updates["modernness"]      # grade string present
+    assert updates["enriched"] == "yes" and updates["modernness"]      # grade string present
