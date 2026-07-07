@@ -47,8 +47,8 @@ def enrich_company(domain, name):
     except Exception:
         pass
     try:
-        j = jobs_search(name, domain)
-        d["open_roles"], d["ats"] = j.get("count", 0), j.get("ats") or ""
+        j = jobs_search(name, domain, render=False)   # render=False: ATS-API hiring counts, NO per-company
+        d["open_roles"], d["ats"] = j.get("count", 0), j.get("ats") or ""   # browser (browser tier = ~8min/co at batch scale)
     except Exception:
         pass
     try:
