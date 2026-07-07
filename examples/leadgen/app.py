@@ -13,6 +13,7 @@ so it's testable without the UI — see tests/test_leadgen_app.py.
 """
 import logging
 import sys
+import threading
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
@@ -197,7 +198,7 @@ class _BufHandler(logging.Handler):
             pass
 
 
-def _run_streaming(label, fn):
+def _run_streaming(label, fn, total=None, counter=None):
     """Run fn() in a worker thread and firehose pith's backend logs (tier fetches, url_done,
     scrapling 'Fetched (200)', trafilatura) into a live panel while it works. Returns fn()'s value."""
     import threading
@@ -226,11 +227,17 @@ def _run_streaming(label, fn):
     t = threading.Thread(target=work, daemon=True)
     t.start()
     with st.status(label, expanded=True) as status:
+        prog = st.progress(0.0) if total else None       # real progress: fraction of leads completed
         panel = st.empty()
         while t.is_alive():
+            if prog is not None:
+                done = counter[0] if counter else 0
+                prog.progress(min(done / total, 1.0), text=f"{done}/{total} done")
             panel.code("\n".join(list(buf)[-26:]) or "starting…", language="log")
-            time.sleep(0.25)
+            time.sleep(0.2)
         t.join()
+        if prog is not None:
+            prog.progress(1.0, text=f"{total}/{total} done")
         panel.code("\n".join(list(buf)[-26:]) or "(no backend logs)", language="log")
         status.update(state="error" if out.get("e") else "complete",
                       label=f"{label}  {'failed' if out.get('e') else 'done'}")
@@ -320,6 +327,8 @@ def _run_ui():
             log = logging.getLogger("pith")
             rows_ref = ss.rows        # plain list — bound here so the worker thread never touches session_state
 
+            done, _lock = [0], threading.Lock()   # thread-safe completion count -> real progress
+
             def _one(idx):
                 r = rows_ref[idx]
                 log.info("enrich_row", extra={"lead": r.get("name", "")[:34], "site": r.get("website", "")})
@@ -327,13 +336,16 @@ def _run_ui():
                     r.update(fn(r))
                 except Exception as e:
                     r["framework" if do_tech else "email"] = f"err: {str(e)[:30]}"
+                with _lock:
+                    done[0] += 1
 
             def _batch():                     # enrich leads concurrently (was one-at-a-time)
                 from concurrent.futures import ThreadPoolExecutor
                 with ThreadPoolExecutor(max_workers=parallel) as pool:
                     list(pool.map(_one, sel))
 
-            _run_streaming(f"{'✉ contacts' if do_contacts else '🖧 tech'} · enriching {len(sel)} leads (5 at a time)…", _batch)
+            _run_streaming(f"{'✉ contacts' if do_contacts else '🖧 tech'} · enriching {len(sel)} leads ({parallel} at a time)…",
+                           _batch, total=len(sel), counter=done)
             st.rerun()
 
         enriched = sum(1 for r in ss.rows if r.get("enriched") == "yes")

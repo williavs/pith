@@ -23,6 +23,7 @@ Design contract for a Provider (so new sources drop in without touching the engi
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 import time
@@ -33,6 +34,8 @@ from dataclasses import dataclass, field
 from typing import Callable, Optional
 
 from .evidence import Fact, Source, aggregate
+
+log = logging.getLogger("pith")
 
 _UA = os.environ.get("PITH_LEADS_UA", "pith-leads (https://github.com/williavs/pith)")
 _GEO_TTL = 86400
@@ -387,6 +390,7 @@ class OvertureProvider:
         import subprocess
         s, w, n, e = spec.bbox
         cmd = ["overturemaps", "download", f"--bbox={w},{s},{e},{n}", "-f", "geojsonseq", "--type=place"]
+        log.info("overture_download", extra={"bbox": f"{w:.2f},{s:.2f},{e:.2f},{n:.2f}", "note": "streaming release (slow)"})
         proc = subprocess.run(cmd, capture_output=True, text=True, timeout=spec.config.get("overture_timeout", 240))
         if proc.returncode != 0:
             raise RuntimeError(f"overturemaps failed: {proc.stderr[:200]}")
@@ -624,7 +628,9 @@ def find_businesses(category: str, location: str, sources="auto", limit: int = 1
     Filters are opt-in and applied AFTER merge so you see what was dropped in coverage.
     """
     config = config or {}
+    log.info("geocode", extra={"location": location})
     geo = geocode(location)
+    log.info("geocoded", extra={"place": geo["display"][:48], "lat": round(geo["lat"], 3), "lon": round(geo["lon"], 3)})
     if radius_km:
         bbox = _bbox_from_radius(geo["lat"], geo["lon"], radius_km)
     else:
@@ -647,8 +653,11 @@ def find_businesses(category: str, location: str, sources="auto", limit: int = 1
             chosen.append(p)
 
     raws: list[RawBiz] = []
+    log.info("search_start", extra={"category": category, "providers": [p.name for p in chosen],
+                                    "skipped": list(coverage["skipped"])})
 
     def run(p):
+        log.info("provider_query", extra={"provider": p.name})
         return p.name, p.search(spec)
 
     if chosen:
@@ -656,8 +665,10 @@ def find_businesses(category: str, location: str, sources="auto", limit: int = 1
             for nm, res in _as_completed(pool, chosen, run, coverage):
                 coverage["ran"].append(nm)
                 coverage["counts"][nm] = len(res)
+                log.info("provider_done", extra={"provider": nm, "found": len(res)})
                 raws.extend(res)
 
+    log.info("merging", extra={"raw": len(raws)})
     merged = [_merge_cluster(c, _WEIGHTS) for c in _cluster(raws)]
 
     filtered = []
@@ -674,6 +685,7 @@ def find_businesses(category: str, location: str, sources="auto", limit: int = 1
 
     coverage["merged_total"] = len(merged)
     coverage["after_filters"] = len(filtered)
+    log.info("merged", extra={"merged": len(merged), "after_filters": len(filtered)})
     coverage["source_meta"] = {p.name: {"update_frequency": p.update_frequency,
                                          "reliability": p.reliability, "license": p.license,
                                          "needs_key": getattr(p, "needs_key", False)}
