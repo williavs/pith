@@ -64,23 +64,20 @@ def enrich_contacts(row: dict) -> dict:
     site = row.get("website")
     if not site:
         return {"error": "no website"}
-    from pith import Extractor
     from pith.cli import contact_evidence
     from pith.recipes import owner_email, people, rank_phones
     if not site.startswith("http"):
         site = "https://" + site
-    ev = contact_evidence(site, workers=6)          # crawls team/about pages: schema + heuristic people
+    ev = contact_evidence(site, workers=6)          # one crawl -> contacts + people + firmographics + socials
     facts = ev["facts"]
     best = owner_email(facts)
     emails = [f.value for f in facts if f.kind == "email"]
     phones = [f.value for f in rank_phones(facts)]
     roster = people(facts)
     dm, title, dm_email = _pick_decision_maker(roster)
-    r = Extractor().extract([site]).results[0]
-    socials = [s for s in r.socials if any(h in s for h in _SOCIAL_HOSTS)]
+    socials = [f.value for f in facts if f.kind == "social" and any(h in f.value for h in _SOCIAL_HOSTS)]
     linkedin = next((s for s in socials if "linkedin.com" in s), "")
-    from pith.extract import firmographics
-    fg = firmographics(r.structured)          # free rating/hours from the site's own LocalBusiness schema
+    fg = ev.get("firmographics", {})          # rating/hours from the crawl (no second fetch)
     rating = f"{fg['rating']}" + (f" ({fg['review_count']})" if fg.get("review_count") else "") if fg.get("rating") else ""
     return {
         "email": (best.value if best else "") or (emails[0] if emails else ""),

@@ -298,7 +298,14 @@ def contact_evidence(website: str, workers: int = 4) -> dict:
         if f.kind == "email":
             f.labels["email_type"] = _email_type_scoped(f.value, domain)
     facts = [f for f in facts if not (f.kind == "email" and f.labels.get("email_type") == "drop")]
-    return {"domain": domain, "facts": facts, "coverage": cov, "whois": whois}
+    # firmographics the crawl already fetched (rating/hours/founded/employees/geo) — merged across
+    # pages. Was being thrown away; folding it in so one call returns the whole picture.
+    from .extract import firmographics
+    fg: dict = {}
+    for r in out.results:
+        for k, v in firmographics(r.structured).items():
+            fg.setdefault(k, v)
+    return {"domain": domain, "facts": facts, "coverage": cov, "whois": whois, "firmographics": fg}
 
 
 def _facts_of(evidence: dict, kind: str):

@@ -156,9 +156,22 @@ _PHONE_FMT = re.compile(r"(?<![\d.])(?:\+?1[-.\s])?\(?\d{3}\)?[-.\s]\d{3}[-.\s]\
 _PHONE_INTL = re.compile(r"(?<![\w+])\+\d[\d\s().\-]{6,18}\d(?!\d)")
 
 _JSON_LD = re.compile(r'<script[^>]*type=["\']application/ld\+json["\'][^>]*>(.*?)</script>', re.S | re.I)
-_ORG_TYPES = ("Organization", "Corporation", "LocalBusiness", "Store", "Restaurant",
-              "ProfessionalService", "HomeAndConstructionBusiness", "HVACBusiness", "Plumber",
-              "Electrician", "GeneralContractor", "LegalService", "Attorney", "Dentist")
+# An allowlist of schema.org org types is prescriptive — schema has ~100 LocalBusiness subtypes
+# (HairSalon, MedicalClinic, AutoRepair, DaySpa, ...) and any not listed lost its whole entity
+# (address/rating/hours/contact). Match by KEYWORD instead so subtypes flow through generally.
+_ORG_KEYWORDS = ("business", "organization", "corporation", "store", "restaurant", "service",
+                 "clinic", "salon", "shop", "agency", "practice", "dealer", "repair", "hotel",
+                 "hospital", "school", "bank", "company", "firm", "pharmacy", "cafe", "café",
+                 "bakery", "bar", "gym", "spa", "studio", "office", "center", "centre", "provider",
+                 "contractor", "market", "resort", "winery", "brewery", "dentist", "attorney",
+                 "lawyer", "physician", "medical", "dental", "veterinary", "realtor", "estate")
+_ORG_TYPES = ("Organization", "LocalBusiness")   # kept for docs/readability; matching uses keywords
+
+
+def _is_org_type(types) -> bool:
+    """True if any @type looks like a business/org — keyword match over schema.org's many
+    LocalBusiness subtypes, so a salon/clinic/auto-shop isn't dropped for not being enumerated."""
+    return any(any(kw in str(t).lower() for kw in _ORG_KEYWORDS) for t in types)
 # a Person reached via one of these keys is a review/blog author or quoted third party — NOT
 # the business owner. Drop them (precision: a wrong person poisons outreach).
 _DROP_PARENT = frozenset({"author", "creator", "reviewer", "commenter", "contributor", "publisher"})
@@ -379,7 +392,7 @@ def structured(html: str) -> list[dict]:
                 continue
             types = e.get("@type") if isinstance(e.get("@type"), list) else [e.get("@type")]
             is_person = "Person" in types
-            is_org = any(x in _ORG_TYPES for x in types)
+            is_org = _is_org_type(types)
             if not (is_person or is_org):
                 continue
             # Keep EVERY real entity — never hide data. Tag its relationship to the page so a
@@ -406,7 +419,7 @@ def firmographics(structured: list[dict]) -> dict:
     got: dict = {}
     for e in structured:                       # merge across all org entities (rating + hours often split)
         types = e.get("@type") if isinstance(e.get("@type"), list) else [e.get("@type")]
-        if any(t in _ORG_TYPES for t in types):
+        if _is_org_type(types):
             for k in want:
                 if e.get(k) and k not in got:
                     got[k] = e[k]
@@ -577,6 +590,12 @@ def enrich(markdown: str, html: str, source_url: str = "") -> dict:
         sa = e.get("sameAs")
         if sa:
             obs += [(str(u), "social", _s("schema.org"), {}) for u in (sa if isinstance(sa, list) else [sa]) if _is_profile(str(u))]
+    mt = meta(html)                            # fold OG/Facebook contact tags — free, previously dropped
+    m_em, m_ph, m_addr = _meta_contact(mt)
+    obs += [(e, "email", _s("og"), _email_label(e)) for x in m_em for e in emails(x) if not _junk_email(e)]
+    obs += [(p, "phone", _s("og"), {}) for x in m_ph for p in phones(x)]
+    if len(m_addr) > 8:
+        obs.append((m_addr, "address", _s("og"), {}))
     facts = aggregate(obs)
 
     def _vals(kind):
@@ -587,6 +606,20 @@ def enrich(markdown: str, html: str, source_url: str = "") -> dict:
         "socials": _vals("social"),
         "addresses": _vals("address"),
         "structured": st,
-        "meta": meta(html),
+        "meta": mt,
         "facts": facts,                        # evidence model: value + sources(url,method) + corroboration
     }
+
+
+def _meta_contact(mt: dict) -> tuple[list, list, str]:
+    """Contact fields OpenGraph/Facebook 'business'/'place' tags publish for free — and that the
+    old 6-key meta allowlist dropped: business:contact_data:* and og:email/og:phone_number/address."""
+    def g(*ks):
+        return next((mt[k] for k in ks if mt.get(k)), "")
+    em = g("business:contact_data:email", "og:email")
+    ph = g("business:contact_data:phone_number", "og:phone_number")
+    parts = [g("business:contact_data:street_address", "og:street_address"),
+             g("business:contact_data:locality", "og:locality"),
+             g("business:contact_data:region", "og:region"),
+             g("business:contact_data:postal_code", "og:postal-code", "og:postal_code")]
+    return ([em] if em else []), ([ph] if ph else []), ", ".join(p for p in parts if p)
