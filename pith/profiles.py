@@ -58,9 +58,9 @@ def _pick(sites: dict, persona, kind, only, all_sites) -> list[str]:
     return [s for s in names if not sites[s].get("isNSFW")]
 
 
-def _check(cfg: dict, handle: str, timeout: int):
-    """One site -> profile URL if the handle CLAIMED it, False if available, None if
-    inconclusive (illegal handle / WAF / error). Reimplemented from Sherlock's algorithm."""
+def _probe(cfg: dict, handle: str, timeout: int):
+    """Raw Sherlock-style decision: profile URL if the handle exists, False if not, None if
+    inconclusive (illegal handle / WAF / error)."""
     rc = cfg.get("regexCheck")
     if rc and not re.search(rc, handle):
         return None                            # handle can't exist on this site
@@ -96,6 +96,31 @@ def _check(cfg: dict, handle: str, timeout: int):
     else:
         exists = st == 200
     return url if exists else False
+
+
+# status-only detection ("does it return 2xx?") false-positives on sites that serve 2xx for
+# non-existent users too (SPAs that render "not found" client-side, 202 bot-interstitials like
+# airliners.net, apple developer forums). Content-checking (`message`) sites read the body, so
+# they distinguish; status-only sites don't. Guard them with a one-time control probe.
+_STATUS_ONLY = frozenset({"status_code", "response_url", None})
+_DISTINGUISHES: dict = {}   # cfg url -> bool: does a junk handle correctly NOT exist?
+_JUNK_HANDLE = "zqx7w* no such user *4f9k"  # implausible; sanitized per-site below
+
+
+def _check(cfg: dict, handle: str, timeout: int):
+    """One site -> profile URL if the handle CLAIMED it, False if available, None if inconclusive.
+    For status-only sites, first confirm the site can actually tell a real handle from a fake one
+    (cached) — if a junk handle also 'exists', the site 2xx's everything and its hits are noise."""
+    et = cfg.get("errorType")
+    if et in _STATUS_ONLY:
+        url = cfg["url"]
+        if url not in _DISTINGUISHES:
+            junk = re.sub(r"[^A-Za-z0-9]", "", _JUNK_HANDLE) or "znxqp7wk4d2f0a"
+            ctrl = _probe(cfg, junk, timeout)
+            _DISTINGUISHES[url] = not isinstance(ctrl, str)   # unreliable iff a junk handle "exists"
+        if not _DISTINGUISHES[url]:
+            return None                        # site can't distinguish -> its hits are false positives
+    return _probe(cfg, handle, timeout)
 
 
 # role/bot/reserved usernames that exist on many platforms but are NOT a person — surfacing
