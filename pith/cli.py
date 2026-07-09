@@ -703,6 +703,53 @@ def _llms_path(url: str) -> str:
     return path if path.endswith(".md") else path + ".md"
 
 
+def _fetch_native_md(url: str, timeout: int = 15):
+    """If the site serves this page as native markdown at `<url>.md`, return it as a Result —
+    canonical and browser-free (Mintlify/Fern/Claude docs do this). None if there's no clean .md,
+    so the caller extracts the HTML instead. Guards against 200 soft-404s that return HTML."""
+    cand = url if url.endswith(".md") else url.rstrip("/") + ".md"
+    try:
+        req = urllib.request.Request(cand, headers={
+            "User-Agent": "Mozilla/5.0 pith", "Accept": "text/markdown, text/plain"})
+        resp = urllib.request.urlopen(req, timeout=timeout)
+        ctype = resp.headers.get("Content-Type", "").lower()
+        body = resp.read().decode("utf-8", "ignore")
+    except Exception:
+        return None
+    head = body.lstrip()[:2000].lower()
+    if not body.strip() or head[:1] == "<" or "<html" in head or "text/html" in ctype:
+        return None                                        # HTML (or soft-404), not real markdown
+    if "markdown" not in ctype and "text/plain" not in ctype and not head.startswith("#"):
+        return None                                        # unconfirmed type and no md structure
+    title = next((ln[2:].strip() for ln in body.splitlines() if ln.startswith("# ")), None)
+    r = Result(url=url, title=title, markdown=body)
+    r._native = True                                       # transient marker for the native/extracted tally
+    return r
+
+
+def run_llms_batch(ex, targets, *, render_js, workers):
+    """Drive --llms-txt: sitemap/crawl gives the page list (authoritative coverage — the site's own
+    llms.txt is ignored, it's often partial). Per URL, prefer the native `<url>.md`; fall back to
+    HTML extraction. Returns (label, url, Result|error) rows."""
+    total = len(targets)
+
+    def one(item):
+        i, (label, url) = item
+        native = _fetch_native_md(url)
+        tag = " (native .md)" if native is not None else ""
+        print(f"[{i}/{total}] {url}{tag}", file=sys.stderr, flush=True)
+        if native is not None:
+            return (label, url, native)
+        out = ex.extract(urls=[url], render_js=render_js)
+        return (label, url, out.results[0] if out.results else out.errors[0])
+
+    items = list(enumerate(targets, 1))
+    if workers > 1:
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            return list(pool.map(one, items))
+    return [one(it) for it in items]
+
+
 def write_llms_txt(rows, outdir: str) -> int:
     """Write a batch as an agent-friendly corpus: one markdown file per page (mirroring its URL
     path) plus an `llms.txt` index (title + local link + description). The keyless pith counterpart
@@ -719,7 +766,10 @@ def write_llms_txt(rows, outdir: str) -> int:
             seen[rel] = 0
         dest = os.path.join(outdir, rel)
         os.makedirs(os.path.dirname(dest) or outdir, exist_ok=True)
-        body = (f"# {r.title}\n\n" if r.title else "") + (r.markdown or "")
+        # native .md is already complete markdown (its own H1); only extracted pages need the title
+        # prepended (r.markdown from the extractor omits the H1).
+        native = getattr(r, "_native", False)
+        body = (r.markdown or "") if native else ((f"# {r.title}\n\n" if r.title else "") + (r.markdown or ""))
         with open(dest, "w") as fh:
             fh.write(body)
         import html
@@ -832,11 +882,14 @@ def main() -> None:
             if not args.verbose:
                 print(f"gate: ranked {n} candidates by '{args.about}'"
                       + (f", fetching top {args.budget}" if args.budget else ""), file=sys.stderr)
-        rows = run_batch(ex, targets, render_js=render_js, workers=args.workers, verbose=args.verbose)
-        if args.llms_txt:
+        if args.llms_txt:  # sitemap-driven coverage; native <url>.md per page, HTML fallback
+            rows = run_llms_batch(ex, targets, render_js=render_js, workers=args.workers)
+            native = sum(1 for _, _, r in rows if getattr(r, "_native", False))
             n = write_llms_txt(rows, args.llms_txt)
-            print(f"llms.txt corpus: {n} pages -> {args.llms_txt}", file=sys.stderr)
+            print(f"llms.txt corpus: {n} pages ({native} native .md, {n - native} extracted) "
+                  f"-> {args.llms_txt}", file=sys.stderr)
             return
+        rows = run_batch(ex, targets, render_js=render_js, workers=args.workers, verbose=args.verbose)
         print(render(rows, args.format))
         return
 

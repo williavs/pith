@@ -21,16 +21,21 @@ Output:
 - `<outdir>/llms.txt` — index: `- [title](local/path.md): description`, one line per page
 - `<outdir>/<url-path>.md` — clean markdown, dirs mirror the URL (`/docs/en/hooks` → `docs/en/hooks.md`)
 
-## When to use pith vs. the site's own markdown
+## It's automatic — native markdown when available, extraction when not
 
-Check first — many modern doc sites already serve markdown natively (a `/llms.txt` index and a
-`<url>.md` for every page). If they do, just fetch those; it's canonical and cheaper than
-re-extracting HTML. (That's how the sibling `claude-docs-mirror` tool works — the Claude Code docs
-serve `.md` directly.)
+You don't choose. Per page, pith first tries the site's **native `<url>.md`** (Mintlify/Fern/Claude
+docs serve this) — canonical, byte-for-byte, no browser. If that isn't real markdown (HTML,
+soft-404, missing), it **extracts the HTML** instead (browser-escalating only for JS walls). The run
+reports the split, e.g. `142 native .md, 21 extracted`.
 
-Reach for `pith --llms-txt` when the site **only gives you HTML** — no `llms.txt`, no `.md`
-endpoints. pith renders each page (escalating to a real browser only for JS-walled pages) and
-produces the markdown corpus the site didn't hand you.
+Two things worth knowing:
+- **The sitemap is the source of truth for coverage**, not the site's `llms.txt`. A site's own
+  `llms.txt` is often curated/partial, so pith ignores it as an input and *generates* a complete one
+  from every sitemap page.
+- **No sitemap?** `--crawl` follows links from the homepage instead.
+
+(If you just want the Claude Code docs specifically and they already serve `.md`, the sibling
+`claude-docs-mirror` tool fetches them directly on a timer — no extraction needed.)
 
 ## Keep it fresh
 
