@@ -750,6 +750,12 @@ def run_llms_batch(ex, targets, *, render_js, workers):
     return [one(it) for it in items]
 
 
+def _clean_title(title: str | None) -> str:
+    """Strip heading-anchor pilcrows (¶, mkdocs/Sphinx) and unescape entities from a page title."""
+    import html
+    return html.unescape((title or "").replace("¶", "")).strip()
+
+
 def write_llms_txt(rows, outdir: str) -> int:
     """Write a batch as an agent-friendly corpus: one markdown file per page (mirroring its URL
     path) plus an `llms.txt` index (title + local link + description). The keyless pith counterpart
@@ -766,15 +772,17 @@ def write_llms_txt(rows, outdir: str) -> int:
             seen[rel] = 0
         dest = os.path.join(outdir, rel)
         os.makedirs(os.path.dirname(dest) or outdir, exist_ok=True)
-        # native .md is already complete markdown (its own H1); only extracted pages need the title
-        # prepended (r.markdown from the extractor omits the H1).
-        native = getattr(r, "_native", False)
-        body = (r.markdown or "") if native else ((f"# {r.title}\n\n" if r.title else "") + (r.markdown or ""))
+        md = r.markdown or ""
+        title = _clean_title(r.title)
+        # Prepend the title only when the body doesn't already open with a heading — native .md and
+        # many extracted pages (mkdocs) already carry their own H1; prepending would double it.
+        body = md if (getattr(r, "_native", False) or md.lstrip().startswith("#")) \
+            else ((f"# {title}\n\n" if title else "") + md)
         with open(dest, "w") as fh:
             fh.write(body)
         import html
         desc = html.unescape((r.meta or {}).get("description") or "")
-        entries.append((html.unescape(r.title or url), rel, " ".join(desc.split())))
+        entries.append((_clean_title(r.title) or url, rel, " ".join(desc.split())))
 
     from urllib.parse import urlsplit
     host = urlsplit(ok[0][1]).netloc if ok else ""
