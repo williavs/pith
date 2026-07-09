@@ -73,7 +73,13 @@ pith --from companies.csv                 # markdown, per-label sections (defaul
 pith --from companies.csv --format table  # compact: status / bytes / target
 pith --from companies.csv --format json   # machine-readable {results, errors}
 pith --from companies.csv --workers 8     # parallel fetches
+
+# a whole site -> agent-ready corpus (markdown-per-page tree + llms.txt index)
+pith --sitemap https://example.com/sitemap.xml --limit 500 --llms-txt ./example-docs
+pith --crawl https://example.com --limit 200 --llms-txt ./example-docs   # no sitemap? crawl
 ```
+
+`--llms-txt` makes any HTML-only site agent-friendly, keyless — see `examples/llms-txt/`.
 
 ## Business intelligence — leads, people, signals
 

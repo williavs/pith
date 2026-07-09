@@ -10,6 +10,7 @@ import argparse
 import csv
 import json
 import logging
+import os
 import re
 import sys
 import urllib.request
@@ -691,13 +692,58 @@ def render(rows, fmt: str) -> str:
     return "\n".join(out)
 
 
+def _llms_path(url: str) -> str:
+    """A page URL -> a local corpus path mirroring its URL structure.
+    https://x.com/docs/en/hooks -> docs/en/hooks.md ; a trailing-slash/root path -> .../index.md"""
+    from urllib.parse import urlsplit, unquote
+    path = unquote(urlsplit(url).path)
+    if not path or path.endswith("/"):
+        path += "index"
+    path = path.strip("/")
+    return path if path.endswith(".md") else path + ".md"
+
+
+def write_llms_txt(rows, outdir: str) -> int:
+    """Write a batch as an agent-friendly corpus: one markdown file per page (mirroring its URL
+    path) plus an `llms.txt` index (title + local link + description). The keyless pith counterpart
+    to a hosted extract-from-sitemap / llms.txt generator. Returns the page count written."""
+    outdir = os.path.expanduser(outdir)
+    ok = [(l, u, r) for l, u, r in rows if isinstance(r, Result) and (r.markdown or r.title)]
+    entries, seen = [], {}
+    for _, url, r in ok:
+        rel = _llms_path(url)
+        if rel in seen:                                    # two URLs, same path -> disambiguate
+            seen[rel] += 1
+            rel = rel[:-3] + f"-{seen[rel]}.md"
+        else:
+            seen[rel] = 0
+        dest = os.path.join(outdir, rel)
+        os.makedirs(os.path.dirname(dest) or outdir, exist_ok=True)
+        body = (f"# {r.title}\n\n" if r.title else "") + (r.markdown or "")
+        with open(dest, "w") as fh:
+            fh.write(body)
+        import html
+        desc = html.unescape((r.meta or {}).get("description") or "")
+        entries.append((html.unescape(r.title or url), rel, " ".join(desc.split())))
+
+    from urllib.parse import urlsplit
+    host = urlsplit(ok[0][1]).netloc if ok else ""
+    lines = [f"# {host}", "", f"> {len(entries)} pages mirrored by pith.", ""]
+    for title, rel, desc in entries:
+        lines.append(f"- [{title}]({rel})" + (f": {desc}" if desc else ""))
+    with open(os.path.join(outdir, "llms.txt"), "w") as fh:
+        fh.write("\n".join(lines) + "\n")
+    return len(entries)
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(prog="pith", description="URL -> clean LLM-ready markdown (free).")
     ap.add_argument("url", nargs="?", help="a single URL (omit when using --from)")
     ap.add_argument("--from", dest="from_file", metavar="FILE", help="batch: read URLs from a list file (txt or csv)")
     ap.add_argument("--sitemap", metavar="URL", help="batch: crawl a sitemap.xml and gather every page (filter with --match)")
     ap.add_argument("--crawl", metavar="URL", help="batch: from a homepage, follow links into about/contact/team/... sections")
-    ap.add_argument("--match", metavar="SUBSTR", help="with --sitemap: keep only URLs containing this substring")
+    ap.add_argument("--llms-txt", dest="llms_txt", metavar="OUTDIR", help="with --sitemap/--crawl/--from: write an agent-friendly corpus (one markdown file per page mirroring its URL path + an llms.txt index) to OUTDIR instead of printing. Pair with --limit to grab a whole doc site")
+    ap.add_argument("--match", metavar="SUBSTR", help="with --sitemap: keep onlyURLs containing this substring")
     ap.add_argument("--limit", type=int, default=25, help="cap pages gathered by --sitemap/--crawl (default 25)")
     ap.add_argument("--directory", metavar="CATEGORY", help="GTM: build a business list from YellowPages (use with --geo, e.g. --directory plumber --geo 'Columbus, OH')")
     ap.add_argument("--geo", metavar="LOCATION", help="with --directory: city, state (e.g. 'Columbus, OH')")
@@ -787,6 +833,10 @@ def main() -> None:
                 print(f"gate: ranked {n} candidates by '{args.about}'"
                       + (f", fetching top {args.budget}" if args.budget else ""), file=sys.stderr)
         rows = run_batch(ex, targets, render_js=render_js, workers=args.workers, verbose=args.verbose)
+        if args.llms_txt:
+            n = write_llms_txt(rows, args.llms_txt)
+            print(f"llms.txt corpus: {n} pages -> {args.llms_txt}", file=sys.stderr)
+            return
         print(render(rows, args.format))
         return
 
