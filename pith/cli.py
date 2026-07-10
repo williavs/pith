@@ -80,6 +80,32 @@ def read_sitemap(url: str, match: str | None = None, limit: int | None = None) -
     return [(None, u) for u in uniq]
 
 
+def read_links(ex, url: str, match: str | None = None, limit: int | None = None,
+               render_js="auto") -> list[tuple[str | None, str]]:
+    """Harvest the links ON a page — a hub/index/TOC/archive — as extract targets. `match` keeps
+    only URLs containing that substring (e.g. 'logic-noise' for one series). The general 'this page
+    lists the things I want' source; the extractor browser-escalates if the hub is a JS shell.
+    ponytail: one level (the hub's own links); paginated archives need multiple seeds or a feed."""
+    out = ex.extract(urls=[url], render_js=render_js)
+    if not out.results:
+        return []
+    from urllib.parse import urlsplit
+    links = out.results[0].links
+    if match:
+        links = [u for u in links if match in u]
+    seen, uniq = set(), []                     # dedupe the same resource across http/https + trailing slash
+    for u in links:
+        sp = urlsplit(u)
+        key = (sp.netloc.replace("www.", ""), sp.path.rstrip("/"))
+        if key not in seen:
+            seen.add(key)
+            uniq.append(u)
+    if limit and len(uniq) > limit:
+        print(f"links: {len(uniq)} urls, capping to --limit {limit}", file=sys.stderr)
+        uniq = uniq[:limit]
+    return [(None, u) for u in uniq]
+
+
 # Team/people pages carry a hundred different names, and plenty of sites give them an opaque URL
 # ("/p/42") with the real label only in the nav TEXT. So we match on URL path AND anchor text, over
 # a broad slug set, and PRIORITIZE people-rich pages so they win the crawl budget over about/contact.
@@ -799,10 +825,11 @@ def main() -> None:
     ap.add_argument("url", nargs="?", help="a single URL (omit when using --from)")
     ap.add_argument("--from", dest="from_file", metavar="FILE", help="batch: read URLs from a list file (txt or csv)")
     ap.add_argument("--sitemap", metavar="URL", help="batch: crawl a sitemap.xml and gather every page (filter with --match)")
+    ap.add_argument("--links", metavar="URL", help="batch: extract the links ON this page (a hub/index/TOC/archive) and fetch each — filter with --match. The general 'this page lists what I want' source")
     ap.add_argument("--crawl", metavar="URL", help="batch: from a homepage, follow links into about/contact/team/... sections")
-    ap.add_argument("--llms-txt", dest="llms_txt", metavar="OUTDIR", help="with --sitemap/--crawl/--from: write an agent-friendly corpus (one markdown file per page mirroring its URL path + an llms.txt index) to OUTDIR instead of printing. Pair with --limit to grab a whole doc site")
-    ap.add_argument("--match", metavar="SUBSTR", help="with --sitemap: keep onlyURLs containing this substring")
-    ap.add_argument("--limit", type=int, default=25, help="cap pages gathered by --sitemap/--crawl (default 25)")
+    ap.add_argument("--llms-txt", dest="llms_txt", metavar="OUTDIR", help="with --sitemap/--links/--crawl/--from: write an agent-friendly corpus (one markdown file per page mirroring its URL path + an llms.txt index) to OUTDIR instead of printing. Pair with --limit to grab a whole doc site")
+    ap.add_argument("--match", metavar="SUBSTR", help="with --sitemap/--links: keep only URLs containing this substring")
+    ap.add_argument("--limit", type=int, default=25, help="cap pages gathered by --sitemap/--links/--crawl (default 25)")
     ap.add_argument("--directory", metavar="CATEGORY", help="GTM: build a business list from YellowPages (use with --geo, e.g. --directory plumber --geo 'Columbus, OH')")
     ap.add_argument("--geo", metavar="LOCATION", help="with --directory: city, state (e.g. 'Columbus, OH')")
     ap.add_argument("--prospect", metavar="QUERY", help="GTM: search a category+geo (needs $PITH_SEARX_URL) -> a lead list, each with dug owner contact")
@@ -874,9 +901,11 @@ def main() -> None:
         print(render_enrich(rows, "table" if args.format == "md" else args.format))
         return
 
-    if args.sitemap or args.crawl or args.from_file:
+    if args.sitemap or args.links or args.crawl or args.from_file:
         if args.sitemap:
             targets = read_sitemap(args.sitemap, match=args.match, limit=args.limit)
+        elif args.links:
+            targets = read_links(ex, args.links, match=args.match, limit=args.limit, render_js=render_js)
         elif args.crawl:
             targets = crawl_site(args.crawl, limit=args.limit)
         else:

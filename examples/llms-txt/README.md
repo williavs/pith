@@ -13,9 +13,28 @@ pith --sitemap https://example.com/sitemap.xml --limit 500 --workers 8 --llms-tx
 # one section only
 pith --sitemap https://example.com/sitemap.xml --match /docs/ --limit 200 --llms-txt ./example-docs
 
+# everything linked from a HUB page (a series index, blog archive, TOC, awesome-list)
+pith --links https://example.com/series-index --match /article/ --llms-txt ./series
+
 # no sitemap? crawl from the homepage instead
 pith --crawl https://example.com --limit 200 --llms-txt ./example-docs
 ```
+
+### `--links`: the hub-page source
+
+When the thing you want is "every article this index page links to," use `--links`. It extracts the
+hub page, takes its outbound links, keeps those matching `--match`, and fetches each. Real example —
+archive Hackaday's *Logic Noise* series (15 posts, one command, no `curl | grep`):
+
+```sh
+pith --links "https://hackaday.com/series_of_posts/logic-noise/" --match logic-noise --llms-txt ./logic-noise
+```
+
+Every `Result` also exposes `.links` (all outbound URLs on the page) directly, so in Python the
+harvest is just `Extractor().extract([hub]).results[0].links`.
+
+**Caveat — pagination.** `--links` reads one page's links. A paginated archive (`/page/2/`, `/page/3/`)
+needs either multiple `--links` runs, or harvest the URLs across pages yourself and feed `--from`.
 
 Output:
 - `<outdir>/llms.txt` — index: `- [title](local/path.md): description`, one line per page

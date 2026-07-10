@@ -17,7 +17,7 @@ public-data-only. Return dicts below list the fields you actually get.
 
 - `from pith import Extractor` — `Extractor().extract(urls, render_js="auto", concurrency=1, timeout=None)`
   → `ExtractResult(results=[Result], errors=[{url,error,reason}])`.
-  `Result`: `.url .title .markdown .emails .phones .socials .addresses .structured .meta .facts
+  `Result`: `.url .title .markdown .emails .phones .socials .links .addresses .structured .meta .facts
   .error` (per-row soft failure: `empty`/`timeout`/`blocked`/`http_404`/…). Parallel-compat aliases:
   `.excerpts` (`[markdown]`), `.full_content`.
 - `await Extractor().aextract(urls, ...)` — same, async (offloaded to a thread; won't block your loop).
@@ -78,4 +78,4 @@ public-data-only. Return dicts below list the fields you actually get.
 ## CLI
 
 `pith <url>` (one page → markdown) · `pith <url> --format json` · `pith --from list.csv --workers 8`
-(batch; CSV rows are `url` or `label,url`) · `pith --sitemap URL --match SUBSTR`. Run `pith --help`.
+(batch; CSV rows are `url` or `label,url`) · `pith --sitemap URL --match SUBSTR` · `pith --links HUB_URL --match SUBSTR` (every article a hub/index/TOC links to) · `--llms-txt OUTDIR` on any batch writes a markdown-per-page tree + llms.txt index (auto-prefers native <url>.md). Run `pith --help`.

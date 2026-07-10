@@ -74,12 +74,17 @@ pith --from companies.csv --format table  # compact: status / bytes / target
 pith --from companies.csv --format json   # machine-readable {results, errors}
 pith --from companies.csv --workers 8     # parallel fetches
 
+# every article linked from a hub/index/TOC page (a series, an archive, an awesome-list)
+pith --links https://example.com/series-index --match /2024/ --llms-txt ./series
+
 # a whole site -> agent-ready corpus (markdown-per-page tree + llms.txt index)
 pith --sitemap https://example.com/sitemap.xml --limit 500 --llms-txt ./example-docs
 pith --crawl https://example.com --limit 200 --llms-txt ./example-docs   # no sitemap? crawl
 ```
 
 `--llms-txt` makes any HTML-only site agent-friendly, keyless — see `examples/llms-txt/`.
+`--links` fetches everything a hub page points to; every `Result` also carries `.links` (all
+outbound URLs) for free, alongside `.emails/.phones/.socials`.
 
 ## Business intelligence — leads, people, signals
 

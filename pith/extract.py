@@ -647,10 +647,25 @@ def enrich(markdown: str, html: str, source_url: str = "") -> dict:
         "phones": _vals("phone"),
         "socials": _vals("social"),
         "addresses": _vals("address"),
+        "links": page_links(html, source_url),
         "structured": st,
         "meta": mt,
         "facts": facts,                        # evidence model: value + sources(url,method) + corroboration
     }
+
+
+def page_links(html: str, base_url: str = "") -> list[str]:
+    """Every outbound http(s) link on the page — absolute, fragment-stripped, deduped, in document
+    order. The general link harvester, given for free like emails/phones/socials. This is the
+    primitive behind a hub/index/TOC page -> its linked articles (see the CLI `--links` source)."""
+    from urllib.parse import urljoin, urlsplit
+    out, seen = [], set()
+    for m in re.finditer(r'<a\b[^>]*\bhref=["\']([^"\']+)["\']', html or "", re.I):
+        u = urljoin(base_url, m.group(1)).split("#")[0]
+        if urlsplit(u).scheme in ("http", "https") and u not in seen:
+            seen.add(u)
+            out.append(u)
+    return out
 
 
 def _meta_contact(mt: dict) -> tuple[list, list, str]:
